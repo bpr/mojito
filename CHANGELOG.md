@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The bundled `String` now has upstream's inline (SSO) form, as at the pin
+  (R2603): up to 23 bytes live in the String's own three words, with the
+  length in the capacity word's top byte beside `FLAG_IS_INLINE`, so
+  `String().capacity_bytes()` is 23, appends that fit write in place, and
+  a grapheme view over `String("ab") + "c"` survives `+=` instead of
+  trapping with "use after Pointer deallocation". An inline String spills
+  to at least 48 bytes. The VM reads an inline String's bytes through a
+  byte view of the struct and keeps a pointer field whose bytes are text
+  as plain bits; the VM and native bridges (`input()`, raised and
+  unhandled error messages, `abort`) read and build the inline form, and
+  the runtime ABI moves to version 8, whose `mjrt_read_line` returns a
+  short line inline.
+
 - The VM now runs a `Pointer.unsafe_bitcast` to a pointee of another
   layout, as the pin and native code do (R2602): the retyped pointer is a
   byte view of the storage, and a read or write through it reads or

@@ -52,12 +52,27 @@ use std::sync::Mutex;
 ///
 /// Version 7: [`mjrt_repr_string`] writes the VM's escaped string repr into a
 /// caller-owned buffer, and trap category 14 identifies Variant tag mismatch.
-pub const ABI_VERSION: u32 = 7;
+///
+/// Version 8: an [`MjString`] may be inline ([`MJ_STRING_FLAG_IS_INLINE`]),
+/// and [`mjrt_read_line`] writes a line of up to
+/// [`MJ_STRING_INLINE_CAPACITY`] bytes in that form.
+pub const ABI_VERSION: u32 = 8;
 
 /// Set in an [`MjString`]'s `cap` field when the string owns `data`; the
 /// field's other bits are then the buffer's capacity in 8-byte units.
 /// Mirrors the library `String.FLAG_IS_REF_COUNTED`.
 pub const MJ_STRING_FLAG_IS_REF_COUNTED: i64 = 1 << 62;
+
+/// Set in an [`MjString`]'s `cap` field when the string is inline.
+///
+/// Its first [`MJ_STRING_INLINE_CAPACITY`] bytes then hold the UTF-8 data,
+/// and bits 56–60 of `cap` (its top byte's low five bits) the length.
+/// Mirrors the library `String.FLAG_IS_INLINE`.
+pub const MJ_STRING_FLAG_IS_INLINE: i64 = 1 << 63;
+
+/// The most bytes an inline [`MjString`] holds (upstream's
+/// `String.INLINE_CAPACITY`).
+pub const MJ_STRING_INLINE_CAPACITY: usize = 23;
 
 /// Trap categories understood by [`mjrt_trap`]. Values match the backend's
 /// trap numbering; the process exit code is `64 + category`.
@@ -100,8 +115,10 @@ pub struct MjStrDesc {
 /// `data`.
 ///
 /// With [`MJ_STRING_FLAG_IS_REF_COUNTED`] set in `cap`, `data` is an
-/// owned [`mjrt_alloc`] allocation of `(cap & !flag) * 8` bytes; without it
-/// the string is static, over bytes it never frees or writes.
+/// owned [`mjrt_alloc`] allocation of `(cap & !flag) * 8` bytes; with
+/// [`MJ_STRING_FLAG_IS_INLINE`] set, the three fields' own bytes hold the
+/// data and `cap`'s top byte its length; with neither, the string is static,
+/// over bytes it never frees or writes.
 #[repr(C)]
 pub struct MjString {
     pub data: *mut u8,
@@ -565,16 +582,18 @@ pub unsafe extern "C" fn mjrt_trace(kind: u32, data: *const u8, len: u64) {
 }
 
 /// Reads one line from stdin for the `input()` builtin, writing an
-/// [`MjString`] into `out`.
+/// [`MjString`] into `out`, as the library builds a String of the line's
+/// length.
 ///
-/// The string is owned: `data` is a fresh [`mjrt_alloc`] allocation of the
-/// line length rounded up to 8 bytes, which the caller owns, `cap` its 8-byte
-/// units flagged [`MJ_STRING_FLAG_IS_REF_COUNTED`], and `size` the line
-/// length after stripping the trailing `\n` (then `\r`).
-///
-/// EOF yields size 0 with a valid header-only allocation, so every result is
-/// uniformly freeable and noninteractive runs never block. A read error traps
-/// with [`TRAP_STDIN_FAILURE`].
+/// A line of up to [`MJ_STRING_INLINE_CAPACITY`] bytes after stripping the
+/// trailing `\n` (then `\r`) is inline: its bytes lead `out`, the rest of
+/// the 24 bytes are zero but for `cap`'s top byte, [`MJ_STRING_FLAG_IS_INLINE`]
+/// and the length. EOF yields the empty inline string, so noninteractive runs
+/// never block and allocate nothing. A longer line is owned: `data` is a
+/// fresh [`mjrt_alloc`] allocation of the length rounded up to 8 bytes, which
+/// the caller owns, `cap` its 8-byte units flagged
+/// [`MJ_STRING_FLAG_IS_REF_COUNTED`], and `size` the length. A read error
+/// traps with [`TRAP_STDIN_FAILURE`].
 ///
 /// # Safety
 ///
@@ -592,6 +611,14 @@ pub unsafe extern "C" fn mjrt_read_line(out: *mut u8) {
         }
     }
     let len = line.len();
+    if len <= MJ_STRING_INLINE_CAPACITY {
+        let mut words = [0u8; size_of::<MjString>()];
+        words[..len].copy_from_slice(line.as_bytes());
+        let cap = MJ_STRING_FLAG_IS_INLINE | ((len as i64) << 56);
+        words[16..].copy_from_slice(&cap.to_le_bytes());
+        unsafe { std::ptr::copy_nonoverlapping(words.as_ptr(), out, words.len()) };
+        return;
+    }
     let units = len.div_ceil(8);
     let data = unsafe { mjrt_alloc((units * 8) as u64, 1) };
     unsafe {

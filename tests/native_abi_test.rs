@@ -156,6 +156,14 @@ fn abi_version_and_shared_constants_agree() {
         mojito_runtime::MJ_STRING_FLAG_IS_REF_COUNTED,
         rt_abi::MJ_STRING_FLAG_IS_REF_COUNTED
     );
+    assert_eq!(
+        mojito_runtime::MJ_STRING_FLAG_IS_INLINE,
+        rt_abi::MJ_STRING_FLAG_IS_INLINE
+    );
+    assert_eq!(
+        mojito_runtime::MJ_STRING_INLINE_CAPACITY as i64,
+        rt_abi::MJ_STRING_INLINE_CAPACITY
+    );
     assert_eq!(mojito_runtime::TRAP_DIV_MOD_ZERO, rt_abi::TRAP_DIV_MOD_ZERO);
     assert_eq!(mojito_runtime::TRAP_POW_EXPONENT, rt_abi::TRAP_POW_EXPONENT);
     assert_eq!(

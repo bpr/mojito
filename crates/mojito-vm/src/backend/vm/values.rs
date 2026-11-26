@@ -462,10 +462,13 @@ impl VmBackend {
         Ok(Value::Str(line))
     }
 
-    /// Read a nominal `String` value's byte buffer back into a builtin
-    /// string value — the reverse of [`Self::materialize_string_struct`].
+    /// Read a nominal `String` value's text back into a builtin string
+    /// value — the reverse of [`Self::materialize_string_struct`]. An inline
+    /// String (`FLAG_IS_INLINE` in its capacity word) holds its bytes in its
+    /// own three words, read as the byte view that wrote them lays them out;
+    /// a static or owned one points at them.
     pub(super) fn string_struct_literal(&self, value: &Value) -> Result<Value, RuntimeError> {
-        let Value::Struct { fields, .. } = value else {
+        let Value::Struct { name, fields } = value else {
             unreachable!("string bridge receiver is a struct");
         };
         let field = |name: &str| {
@@ -474,20 +477,38 @@ impl VmBackend {
                 .find(|(field, _)| field == name)
                 .map(|(_, value)| value)
         };
-        let (Some(Value::Pointer { allocation, offset }), Some(Value::Int(size))) =
-            (field(STRING_POINTER_FIELD), field(STRING_LENGTH_FIELD))
-        else {
-            return Err(RuntimeError::TypeError(
+        let missing = || {
+            RuntimeError::TypeError(
                 "vm: nominal String value is missing its byte buffer".to_string(),
-            ));
+            )
         };
-        let bytes = self.heap_bytes(
-            &Value::Pointer {
-                allocation: *allocation,
-                offset: *offset,
-            },
-            *size,
-        )?;
+        let bytes = match field(STRING_CAPACITY_FIELD) {
+            Some(Value::Int(capacity)) if capacity & STRING_FLAG_IS_INLINE != 0 => {
+                let length = string_inline_length(*capacity);
+                if length == 0 {
+                    Vec::new()
+                } else {
+                    let mut words = vec![0; STRING_WORDS_SIZE];
+                    self.encode_bytes(value, &string_struct_ty(name), &mut words)?;
+                    words.truncate(length);
+                    words
+                }
+            }
+            _ => {
+                let (Some(Value::Pointer { allocation, offset }), Some(Value::Int(size))) =
+                    (field(STRING_POINTER_FIELD), field(STRING_LENGTH_FIELD))
+                else {
+                    return Err(missing());
+                };
+                self.heap_bytes(
+                    &Value::Pointer {
+                        allocation: *allocation,
+                        offset: *offset,
+                    },
+                    *size,
+                )?
+            }
+        };
         // Lossy, matching the builtin literal slice: byte-wise slicing may
         // leave a split multibyte sequence in the buffer.
         Ok(Value::Str(
@@ -569,19 +590,31 @@ impl VmBackend {
     }
 
     /// Fill a nominal `String` skeleton from a literal's UTF-8 bytes as the
-    /// library's owned form: a heap buffer of the length rounded up to 8
-    /// bytes, its capacity in 8-byte units flagged `FLAG_IS_REF_COUNTED`.
+    /// library builds a String of that length: up to `INLINE_CAPACITY`
+    /// bytes inline, in the three words' bytes under the native layout with
+    /// the length in the capacity word's top byte; a longer text, or any
+    /// text when no layout is configured, in the owned form, a heap buffer
+    /// of the length rounded up to 8 bytes, its capacity in 8-byte units
+    /// flagged `FLAG_IS_REF_COUNTED`.
     pub(super) fn materialize_string_struct(
         &mut self,
         skeleton: Value,
         literal: &str,
     ) -> Result<Value, RuntimeError> {
         let bytes = literal.as_bytes();
-        let units = bytes.len().div_ceil(8);
-        let allocation = self.alloc_utf8_bytes(bytes, units * 8)?;
         let Value::Struct { name, mut fields } = skeleton else {
             unreachable!("string construction starts from a struct skeleton");
         };
+        if bytes.len() <= STRING_INLINE_CAPACITY && self.layout.is_some() {
+            let mut words = vec![0; STRING_WORDS_SIZE];
+            words[..bytes.len()].copy_from_slice(bytes);
+            let flags = (STRING_FLAG_IS_INLINE as u64)
+                | ((bytes.len() as u64) << STRING_INLINE_LENGTH_START);
+            words[STRING_CAPACITY_OFFSET..].copy_from_slice(&flags.to_le_bytes());
+            return self.decode_bytes(&words, &string_struct_ty(&name));
+        }
+        let units = bytes.len().div_ceil(8);
+        let allocation = self.alloc_utf8_bytes(bytes, units * 8)?;
         for (field, slot) in &mut fields {
             *slot = match field.as_str() {
                 STRING_POINTER_FIELD => Value::Pointer {
@@ -852,3 +885,29 @@ const STRING_CAPACITY_FIELD: &str = "_capacity_or_data";
 /// Mirrors the library's `String.FLAG_IS_REF_COUNTED`: set in the capacity
 /// field of a `String` that owns its heap buffer.
 const STRING_FLAG_IS_REF_COUNTED: i64 = 1 << 62;
+
+/// Mirrors the library's `String.FLAG_IS_INLINE`: set in the capacity field
+/// of a `String` whose bytes its own three words hold.
+const STRING_FLAG_IS_INLINE: i64 = 1 << 63;
+
+/// The library's `String.INLINE_CAPACITY`, `INLINE_LENGTH_START`, and the
+/// width of `INLINE_LENGTH_MASK`: an inline String holds up to 23 bytes, its
+/// length in bits 56–60 of the capacity word.
+const STRING_INLINE_CAPACITY: usize = 23;
+const STRING_INLINE_LENGTH_START: u32 = 56;
+const STRING_INLINE_LENGTH_BITS: i64 = 0b1_1111;
+
+/// The size of a `String`'s three words, and the capacity word's offset.
+const STRING_WORDS_SIZE: usize = 24;
+const STRING_CAPACITY_OFFSET: usize = 16;
+
+/// The length an inline String's `capacity` word holds.
+const fn string_inline_length(capacity: i64) -> usize {
+    ((capacity >> STRING_INLINE_LENGTH_START) & STRING_INLINE_LENGTH_BITS) as usize
+}
+
+/// The type of the library `String` struct `name`, which takes no
+/// parameters.
+fn string_struct_ty(name: &str) -> Ty {
+    Ty::new(TyKind::Struct(name.to_string(), Vec::new()))
+}

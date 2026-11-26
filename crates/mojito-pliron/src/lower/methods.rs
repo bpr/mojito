@@ -252,13 +252,13 @@ impl FnLowering<'_> {
         if let Some(descriptor) = self.str_runtime.get(&arg.0).copied() {
             return Ok((descriptor.data, descriptor.len));
         }
-        if let Some(ptr) = self.string_storage(ctx, arg)? {
-            return Ok(self.string_parts(ctx, ptr, dest));
+        if let Some(parts) = self.stored_string_parts(ctx, arg, dest)? {
+            return Ok(parts);
         }
         let arg_ty = self.func.reg_types.get(&arg.0);
         if arg_ty.is_some_and(|ty| ty.kind().is_error()) {
             let ptr = self.reg_ptr(ctx, arg)?;
-            return Ok(self.string_parts(ctx, ptr, dest));
+            return Ok(self.nominal_string_parts(ctx, ptr, dest));
         }
         // A builtin takes no reference, so a reference operand is a
         // by-address one, read through ([`mojito_mir::mir::addressed_receiver`]).

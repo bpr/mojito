@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2612**.
+Next free ID: **R2614**.
 
 ## Ordered Work
 
@@ -2746,6 +2746,13 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     self`), `OwnedPointer.__getitem__` (`ref[AddressSpace.GENERIC] self`),
     and upstream's `Array.unsafe_ptr` (`ref[origin, address_space] self`)
     can spell upstream's receiver clauses.
+  - Probe: `def r(self) -> Pointer[UInt8, origin_of(self)]: return
+    Pointer(to=self).unsafe_bitcast[UInt8]()` is rejected ("expected
+    Pointer[UInt8, origin_of(self)], found Pointer[UInt8,
+    ImmOrigin(...)]"), under `ref`, `mut`, and read `self` alike, where the
+    pin runs all three. The bundled `String.unsafe_ptr` therefore reaches
+    its inline bytes through a `MutUntrackedOrigin` cast; once this lands
+    it can spell upstream's `Pointer(to=self).unsafe_bitcast[Byte]().as_imm()`.
   - Found while landing R743 (2026-10-23).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -7739,6 +7746,26 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2613 A compile-time `String` freezes as its text, so its
+  materialized value loses the pin's representation**
+
+  Problem: `comptime lit = String("abc")`, `comptime g = make(3)` (`"ab"`
+  plus three appends), and `comptime t = make(30)` have capacities `3 23
+  48` at the pin, `23 23 32` on the VM, and `3 5 32` natively.
+  - Upstream materializes a compile-time `String` as the struct its
+    compile-time run built: static, inline, or an owned buffer with its
+    capacity.
+  - The VM's `freeze_value` (`crates/mojito-vm/src/backend/vm.rs`) freezes
+    any nominal String as `CtValue::Str` through `nominal_string_text`.
+  - The VM then rebuilds it by length (`materialize_string_struct`), and
+    the native constant path (`consts.rs`, the `CtValue::Str` at a String
+    struct arm) builds the static form over interned bytes.
+  - The fix freezes a String as its fields, an owned buffer as frozen
+    pointer memory, so both backends materialize the form it had.
+  - Found while landing R2603 (2026-11-25).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 
 Track: `divergences`.
@@ -7906,6 +7933,9 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `self.unsafe_offset(i)[]` traps in the VM below
     (`assets/runtime_error/pointer_to_place_offset_traps.mojo`, whose
     ledger row and `docs/non-goals.md` entry change with it).
+  - That fixture has no `conformance/pliron-parity.tsv` row, so
+    `scripts/check-parity-manifest` fails on it; natively it prints an
+    address where the VM traps, so its row lands with this fix.
   - The VM traps on a non-zero offset of a place pointer outside an
     indexed projection (`offset_place_projection`,
     `mojito-vm/src/backend/vm/references.rs`), since a place handle has no
@@ -13272,34 +13302,6 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2603 `String` has no inline (SSO) form, so a short string reallocates
-  where the pin's writes in place**
-
-  Problem: `var s = String("ab") + "c"` then `for g in s: s += "!!!"; print(g)`
-  prints `a`, `b`, `c` at the pin and traps in the VM with "use after
-  Pointer deallocation" after `a`.
-  - Upstream's `String` holds up to `INLINE_CAPACITY` (23) bytes inside its
-    own three words (`FLAG_IS_INLINE`, `_inline_string`, the inline length
-    in the capacity field's top byte), so growth to 23 bytes never moves the
-    bytes a view reads.
-  - The bundled `String` (`stdlib/std/string.mojo`) has the static and owned
-    forms only, so the `+` result's 8-byte buffer reallocates at the second
-    append.
-  - The inline bytes are read through `Pointer(to=self).unsafe_bitcast[Byte]()`,
-    a byte view of the struct.
-  - Probe: `String().capacity_bytes()` and `String(capacity_bytes=4).capacity_bytes()`
-    print `23 23` at the pin and `0 8` here.
-  - Probe: `String("abc")` grown to 21 bytes has capacity 23 at the pin and
-    24 here.
-  - The native bridges that build an owned String
-    (`store_owned_string_copy` and `emit_string_buffer_release` in
-    `crates/mojito-pliron/src/lower/release.rs`)
-    and the VM's `materialize_string_struct` build the pin's inline form for
-    a short text once it exists.
-  - Found while landing R2600 (2026-11-25).
-  - Depends on R2602 (the VM's byte view of a struct).
-  - Model: Fable, Not Planned.
-
 - [ ] **R2604 `String` copies its heap buffer, where the pin's copy shares it
   under a reference count**
 
@@ -13317,8 +13319,10 @@ residue found inside a task moves to the task that owns its fix.
   - Upstream also sets `FLAG_HAS_NUL_TERMINATOR` for a literal-built
     String, so `as_c_string_span` need not reallocate one. The bundled
     `as_c_string_slice` copies a static string out to write its NUL.
-  - The native owned-String bridges in `crates/mojito-pliron/src/lower/release.rs`
-    and `mjrt_read_line` must allocate the count header too.
+  - The owned arms of the native String bridges (`store_owned_string_copy`
+    in `crates/mojito-pliron/src/lower/release.rs`) and of `mjrt_read_line`,
+    and the VM's `materialize_string_struct`, must allocate the count header
+    too; their inline arms need none.
   - Found while landing R2600 (2026-11-25).
   - Depends on R2602 (the VM's view of the count), R2605 (the native
     copy must run the library constructor that bumps the count), and R2611
@@ -14252,6 +14256,26 @@ residue found inside a task moves to the task that owns its fix.
   - Probe: `e.get_stack_trace()` is "has no method", where the pin answers
     `None` with tracing off.
   - Found while landing R1938 (2026-11-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2612 `String(*args)` writes into an unsized `String`, where the
+  pin reserves the written length first**
+
+  Problem: `String(1234567890, 1234567890, 1234567890)` has capacity 48
+  here and 32 at the pin.
+  - Upstream's `String.__init__[*Ts: Writable]` sums
+    `_TotalWritableBytes` over the arguments and builds
+    `String(capacity_bytes=total)` before writing, so a result over
+    `INLINE_CAPACITY` gets one buffer of its own length.
+  - The bundled body (`stdlib/std/string.mojo`) writes into `String()`
+    piece by piece, so the inline String spills at 24 bytes and doubles to
+    48.
+  - The fix ports `_TotalWritableBytes` (a `Writer` that only counts) and
+    the pre-sized constructor body.
+  - A result that fits inline already agrees: `String(12, "ab")` has
+    capacity 23 on both.
+  - Found while landing R2603 (2026-11-25).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

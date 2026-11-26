@@ -617,9 +617,9 @@ pub fn synthesize_exe_wrapper(
             vec![],
         );
         branch.get_operation().insert_at_back(current, ctx);
-        // The error's message is the MjString at the error offset:
-        // `{ data, size, cap }`.
-        let data_address = if *err_offset == 0 {
+        // The error's message is the MjString at the error offset, in any
+        // of its forms.
+        let message = if *err_offset == 0 {
             storage.get_result(ctx)
         } else {
             let index = u32::try_from(*err_offset).expect("outcome offsets fit u32");
@@ -632,23 +632,14 @@ pub fn synthesize_exe_wrapper(
             gep.get_operation().insert_at_back(err_block, ctx);
             gep.get_result(ctx)
         };
-        let data = LoadOp::new(ctx, data_address, ptr_ty);
-        data.get_operation().insert_at_back(err_block, ctx);
-        let size_index = u32::try_from(*err_offset + 8).expect("outcome offsets fit u32");
-        let size_gep = GetElementPtrOp::new(
-            ctx,
-            storage.get_result(ctx),
-            vec![GepIndex::Constant(size_index)],
-            i8_ty,
-        );
-        size_gep.get_operation().insert_at_back(err_block, ctx);
-        let size = LoadOp::new(ctx, size_gep.get_result(ctx), i64_ty);
-        size.get_operation().insert_at_back(err_block, ctx);
+        let (data, size) = super::release::emit_nominal_string_parts(ctx, message, |ctx, op| {
+            op.insert_at_back(err_block, ctx);
+        });
         let report = CallOp::new(
             ctx,
             CallOpCallable::Direct("mjrt_unhandled_error".try_into().expect("valid identifier")),
             unhandled_ty,
-            vec![data.get_result(ctx), size.get_result(ctx)],
+            vec![data, size],
         );
         report.get_operation().insert_at_back(err_block, ctx);
         let unreachable = UnreachableOp::new(ctx);

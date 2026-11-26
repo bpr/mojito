@@ -19,7 +19,7 @@ part of any native ABI, and `mojito-runtime` must never depend on the
 
 ## ABI versioning
 
-- `ABI_VERSION` (currently **7**) is a monotonic `u32` declared identically in
+- `ABI_VERSION` (currently **8**) is a monotonic `u32` declared identically in
   `mojito_runtime::ABI_VERSION` and `native::rt_abi::MJRT_ABI_VERSION`. Bump
   it on any change to an exported symbol's signature or semantics, an
   exported `#[repr(C)]` type's layout, a trap category's meaning, or any rule
@@ -38,7 +38,10 @@ part of any native ABI, and `mojito-runtime` must never depend on the
   Version 6 added runtime layout/lifetime tracking alongside allocation
   headers and added `mjrt_pointer_status`,
   dynamic-message `mjrt_abort`, and trap categories 7–14 for abort, pointer
-  lifetime, and `MaybeUninit` failures.
+  lifetime, and `MaybeUninit` failures. Version 7 added `mjrt_repr_string`
+  and trap category 14 for a Variant tag mismatch. Version 8 added the
+  inline `MjString` form (`MJ_STRING_FLAG_IS_INLINE`), which
+  `mjrt_read_line` writes for a line of up to 23 bytes.
 - Every linked runtime exports the inspectable `u32` data symbol
   `mjrt_abi_version` and the function `mjrt_version() -> u32`; the
   synthesized executable wrapper references `mjrt_version`, so every produced
@@ -281,16 +284,22 @@ Rules:
 - The **nominal `String`** is its declared stdlib fields laid out by the
   ordinary aggregate rules — upstream's `{ _ptr_or_data: *mut u8,
   _len_or_data: i64, _capacity_or_data: i64 }` (24/8), the runtime's
-  `MjString { data, size, cap }`. `data` holds `size` initialized bytes of
-  UTF-8 in one of two forms, told apart by `cap`:
+  `MjString { data, size, cap }`, in one of three forms told apart by
+  `cap`:
+  - **inline**: `cap` has `MJ_STRING_FLAG_IS_INLINE` (bit 63, upstream's
+    `FLAG_IS_INLINE`) set; the first `MJ_STRING_INLINE_CAPACITY` (23) bytes
+    of the three fields are the UTF-8 data, and bits 56–60 of `cap` its
+    length (`MJ_STRING_INLINE_LENGTH_START`). Neither `data` nor `size` is
+    a pointer or a length; a reader tests the flag first. The String frees
+    nothing, and its capacity reads as 23;
   - **owned**: `cap` has `MJ_STRING_FLAG_IS_REF_COUNTED` (bit 62,
     upstream's `FLAG_IS_REF_COUNTED`) set and its other bits are the
-    capacity in 8-byte units; `data` is an `mjrt_alloc` allocation of that
-    many bytes, which the String frees;
-  - **static**: the flag is clear (`cap == 0`); `data` points at bytes the
-    String neither frees nor writes, such as an interned literal, and the
-    capacity reads as `size`. A mutation copies the bytes into an owned
-    buffer first.
+    capacity in 8-byte units; `data` holds `size` initialized bytes of an
+    `mjrt_alloc` allocation of that many bytes, which the String frees;
+  - **static**: both flags are clear (`cap == 0`); `data` points at `size`
+    bytes the String neither frees nor writes, such as an interned literal,
+    and the capacity reads as `size`. A mutation inlines a short string and
+    copies a longer one into an owned buffer first.
 - A literal's `byte_length()` and `ptr()` read the descriptor: the interned
   constant's address and length for a compile-time literal, or a runtime
   descriptor's `data`/`len`. Every String and `StringSpan` constructor,
@@ -303,13 +312,16 @@ Rules:
   MIR, freeing an owned buffer only (`Pointer.unsafe_free()` lowers to
   `mjrt_free`). A String the backend builds itself — a compile-time String
   constant, a literal default or argument, a raised literal message — is
-  static over the interned bytes; a copy of runtime text is owned over a
-  buffer of its length rounded up to 8 bytes.
+  static over the interned bytes; a copy of runtime text is inline at 23
+  bytes or fewer and otherwise owned over a buffer of its length rounded up
+  to 8 bytes. A bridge that reads a String's text (a raised message, the
+  unhandled-error report, `abort`, a prompt) selects the inline bytes or
+  `data` by the flag, branch-free.
 
 ### Errors and exceptional control flow
 
 - The built-in error value is `MjError { message: MjString }` (24/8): the
-  message is a nominal `String` in either form above, owned by whoever holds
+  message is a nominal `String` in any form above, owned by whoever holds
   the `MjError`, whose release frees an owned message buffer only.
 - A `raises` function compiles as `void f(outcome*, params...)`: one
   prepended **outcome out-pointer** (caller-allocated, replacing the plain
@@ -500,7 +512,7 @@ failure behavior. Summary (authoritative rows in `native::rt_abi`):
 | `mjrt_unhandled_error(data, len) -> !` | Borrows the raised UTF-8 message; reports `unhandled error: <message>` on stderr and exits `64 + 5`; runs no destructors. |
 | `mjrt_abort(data, len) -> !` | Borrows the abort's UTF-8 message; reports `abort: <message>` on stderr and exits `64 + 7`; runs no destructors. |
 | `mjrt_trace(kind, data, len)` | Borrows the UTF-8 payload; reports one ordered lifecycle event (`mjtrace <kind> <payload>`) on stderr. Emitted only by trace-instrumented builds, never by default emission; write errors are ignored so tracing cannot perturb behavior. Kinds: 1 drop, 2 consume, 3 cleanup, 4 raise, 5 catch. |
-| `mjrt_read_line(out)` | Borrows `out` (≥ 24 bytes) and writes an owned `MjString`: `data` is a fresh caller-owned `mjrt_alloc` allocation of the line length rounded up to 8 bytes, `cap` its 8-byte units flagged `MJ_STRING_FLAG_IS_REF_COUNTED`, and `size` the line length (trailing `\n` then `\r` stripped). EOF yields size 0 with a valid header-only allocation (uniformly freeable, never blocks noninteractive runs); a read error traps (category 6). |
+| `mjrt_read_line(out)` | Borrows `out` (≥ 24 bytes) and writes an `MjString` of the line (trailing `\n` then `\r` stripped), as the library builds a String of its length: up to 23 bytes inline (`MJ_STRING_FLAG_IS_INLINE`, the length in `cap`'s top byte, the rest zero), a longer line owned, `data` a fresh caller-owned `mjrt_alloc` allocation of the length rounded up to 8 bytes, `cap` its 8-byte units flagged `MJ_STRING_FLAG_IS_REF_COUNTED`, and `size` the length. EOF yields the empty inline string (nothing to free, never blocks noninteractive runs); a read error traps (category 6). |
 
 Trap categories (shared with the backend's `TrapCategory` codes and exit
 codes `64 + category`): 1 div/mod by zero (exit 65), 2 `**` exponent range

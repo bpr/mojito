@@ -5,6 +5,62 @@
 use super::*;
 use mojito_types::types::TyKind;
 
+/// Emit, through `append`, the `(data, size)` of the nominal String (or the
+/// message of the `MjError`) at `ptr`, as the library's `unsafe_ptr` and
+/// `byte_length` read them: an inline String
+/// (`MJ_STRING_FLAG_IS_INLINE` in `cap`) holds its bytes at `ptr` itself and
+/// its length in `cap`'s top byte; a static or owned one points at them.
+/// Branch-free, so the executable wrapper's error report shares it.
+pub(super) fn emit_nominal_string_parts(
+    ctx: &mut Context,
+    ptr: Value,
+    mut append: impl FnMut(&Context, Ptr<Operation>),
+) -> (Value, Value) {
+    use mojito_native::native::rt_abi::{MJ_STRING_FLAG_IS_INLINE, MJ_STRING_INLINE_LENGTH_START};
+    let ptr_handle = ScalarTy::PTR.handle(ctx);
+    let i8_handle: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
+    let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
+    let i64_handle: TypeHandle = i64_ty.into();
+    let mut constant = |ctx: &mut Context, value: i64| {
+        let attr = IntegerAttr::new(i64_ty, APInt::from_u64(value as u64, bw(64)));
+        let op = ConstantOp::new(ctx, Box::new(attr));
+        append(ctx, op.get_operation());
+        op.get_result(ctx)
+    };
+    let flag = constant(ctx, MJ_STRING_FLAG_IS_INLINE);
+    let zero = constant(ctx, 0);
+    let shift = constant(ctx, MJ_STRING_INLINE_LENGTH_START);
+    let mask = constant(ctx, 0b1_1111);
+    let mut word = |ctx: &mut Context, offset: u32, handle: TypeHandle| {
+        let address = if offset == 0 {
+            ptr
+        } else {
+            let gep = GetElementPtrOp::new(ctx, ptr, vec![GepIndex::Constant(offset)], i8_handle);
+            append(ctx, gep.get_operation());
+            gep.get_result(ctx)
+        };
+        let load = LoadOp::new(ctx, address, handle);
+        append(ctx, load.get_operation());
+        load.get_result(ctx)
+    };
+    let data = word(ctx, 0, ptr_handle);
+    let size = word(ctx, 8, i64_handle);
+    let cap = word(ctx, 16, i64_handle);
+    let flagged = AndOp::new(ctx, cap, flag);
+    append(ctx, flagged.get_operation());
+    let inline = ICmpOp::new(ctx, ICmpPredicateAttr::NE, flagged.get_result(ctx), zero);
+    append(ctx, inline.get_operation());
+    let shifted = LShrOp::new(ctx, cap, shift);
+    append(ctx, shifted.get_operation());
+    let length = AndOp::new(ctx, shifted.get_result(ctx), mask);
+    append(ctx, length.get_operation());
+    let data = SelectOp::new(ctx, inline.get_result(ctx), ptr, data);
+    append(ctx, data.get_operation());
+    let size = SelectOp::new(ctx, inline.get_result(ctx), length.get_result(ctx), size);
+    append(ctx, size.get_operation());
+    (data.get_result(ctx), size.get_result(ctx))
+}
+
 impl FnLowering<'_> {
     /// Whether a value of `ty` semantically owns heap memory (the nominal
     /// String's buffer; raw pointers are not owned).
@@ -138,7 +194,21 @@ impl FnLowering<'_> {
         self.append(ctx, call.get_operation(), None);
     }
 
-    /// Load the `(data, size)` fields of nominal-String storage.
+    /// The `(data, size)` of the nominal String (or `MjError`) at `ptr`, in
+    /// any of its forms ([`emit_nominal_string_parts`]).
+    pub(super) fn nominal_string_parts(
+        &mut self,
+        ctx: &mut Context,
+        ptr: Value,
+        dest: Reg,
+    ) -> (Value, Value) {
+        emit_nominal_string_parts(ctx, ptr, |ctx, op| self.append(ctx, op, Some(dest)))
+    }
+
+    /// Load the `{data, size}` leading words of a `StringSpan` or an
+    /// `MjStrDesc` at `ptr`. A nominal String reads through
+    /// [`Self::nominal_string_parts`], since an inline one's first word is
+    /// text.
     pub(super) fn string_parts(
         &mut self,
         ctx: &mut Context,
@@ -155,19 +225,11 @@ impl FnLowering<'_> {
         (data.get_result(ctx), size.get_result(ctx))
     }
 
-    /// Load the `cap` field of nominal-String storage.
-    pub(super) fn string_cap(&mut self, ctx: &mut Context, ptr: Value, dest: Reg) -> Value {
-        let cap_address = self.gep_byte(ctx, ptr, 16, dest);
-        let i64_handle = ScalarTy::Int.handle(ctx);
-        let cap = LoadOp::new(ctx, cap_address, i64_handle);
-        self.append(ctx, cap.get_operation(), Some(dest));
-        cap.get_result(ctx)
-    }
-
     /// Free the buffer of the nominal String (or the message of the
     /// `MjError`) at `ptr` when the String owns it, as the library's
-    /// `_drop_ref`: a static String's capacity field lacks
-    /// `FLAG_IS_REF_COUNTED`, and `mjrt_free` of null is a no-op.
+    /// `_drop_ref`: a static or inline String's capacity field lacks
+    /// `FLAG_IS_REF_COUNTED` (an inline String's first word is text, never
+    /// freed), and `mjrt_free` of null is a no-op.
     pub(super) fn emit_string_buffer_release(&mut self, ctx: &mut Context, ptr: Value) {
         let ptr_handle = ScalarTy::PTR.handle(ctx);
         let data = LoadOp::new(ctx, ptr, ptr_handle);
@@ -198,10 +260,13 @@ impl FnLowering<'_> {
         self.store_string_fields(ctx, storage, data, len, field, dest);
     }
 
-    /// Store an owned nominal String holding a copy of the `len` bytes at
-    /// `src`, as the library's `_alloc` builds one: a fresh buffer of `len`
-    /// rounded up to 8 bytes, whose 8-byte units, flagged
-    /// `FLAG_IS_REF_COUNTED`, are the capacity field.
+    /// Store a nominal String holding a copy of the `len` bytes at `src`, as
+    /// the library builds a String of that length: up to `INLINE_CAPACITY`
+    /// bytes inline, in the storage's own 24 bytes with `FLAG_IS_INLINE` and
+    /// the length in the capacity field's top byte; a longer text owned, as
+    /// the library's `_alloc` builds one, a fresh buffer of `len` rounded up
+    /// to 8 bytes whose 8-byte units, flagged `FLAG_IS_REF_COUNTED`, are the
+    /// capacity field.
     pub(super) fn store_owned_string_copy(
         &mut self,
         ctx: &mut Context,
@@ -210,6 +275,49 @@ impl FnLowering<'_> {
         len: Value,
         dest: Reg,
     ) {
+        use mojito_native::native::rt_abi::{
+            MJ_STRING_FLAG_IS_INLINE, MJ_STRING_FLAG_IS_REF_COUNTED, MJ_STRING_INLINE_CAPACITY,
+            MJ_STRING_INLINE_LENGTH_START,
+        };
+        let region = self.region.expect("lowering is inside a function");
+        let inline_block = BasicBlock::new(ctx, None, vec![]);
+        inline_block.insert_at_back(region, ctx);
+        let owned_block = BasicBlock::new(ctx, None, vec![]);
+        owned_block.insert_at_back(region, ctx);
+        let join = BasicBlock::new(ctx, None, vec![]);
+        join.insert_at_back(region, ctx);
+        let capacity = self.int_constant(ctx, MJ_STRING_INLINE_CAPACITY);
+        let fits = ICmpOp::new(ctx, ICmpPredicateAttr::ULE, len, capacity);
+        self.append(ctx, fits.get_operation(), Some(dest));
+        let branch = CondBrOp::new(
+            ctx,
+            fits.get_result(ctx),
+            inline_block,
+            vec![],
+            owned_block,
+            vec![],
+        );
+        self.append(ctx, branch.get_operation(), Some(dest));
+
+        self.current = Some(inline_block);
+        let zero = self.int_constant(ctx, 0);
+        let null = ZeroOp::new(ctx, ScalarTy::PTR.handle(ctx));
+        self.append(ctx, null.get_operation(), Some(dest));
+        self.store_string_fields(ctx, storage, null.get_result(ctx), zero, zero, dest);
+        self.mem_copy_dynamic(ctx, storage, src, len, dest);
+        let shift = self.int_constant(ctx, MJ_STRING_INLINE_LENGTH_START);
+        let length = ShlOp::new_with_overflow_flag(ctx, len, shift, no_overflow_flags());
+        self.append(ctx, length.get_operation(), Some(dest));
+        let flag = self.int_constant(ctx, MJ_STRING_FLAG_IS_INLINE);
+        let field = OrOp::new(ctx, length.get_result(ctx), flag);
+        self.append(ctx, field.get_operation(), Some(dest));
+        let cap_address = self.gep_byte(ctx, storage, 16, dest);
+        let cap_store = StoreOp::new(ctx, field.get_result(ctx), cap_address);
+        self.append(ctx, cap_store.get_operation(), Some(dest));
+        let done = BrOp::new(ctx, join, vec![]);
+        self.append(ctx, done.get_operation(), Some(dest));
+
+        self.current = Some(owned_block);
         let seven = self.int_constant(ctx, 7);
         let rounded = AddOp::new_with_overflow_flag(ctx, len, seven, no_overflow_flags());
         self.append(ctx, rounded.get_operation(), Some(dest));
@@ -221,13 +329,14 @@ impl FnLowering<'_> {
         self.append(ctx, bytes.get_operation(), Some(dest));
         let data = self.emit_alloc(ctx, bytes.get_result(ctx), 1, dest);
         self.mem_copy_dynamic(ctx, data, src, len, dest);
-        let flag = self.int_constant(
-            ctx,
-            mojito_native::native::rt_abi::MJ_STRING_FLAG_IS_REF_COUNTED,
-        );
+        let flag = self.int_constant(ctx, MJ_STRING_FLAG_IS_REF_COUNTED);
         let field = OrOp::new(ctx, units.get_result(ctx), flag);
         self.append(ctx, field.get_operation(), Some(dest));
         self.store_string_fields(ctx, storage, data, len, field.get_result(ctx), dest);
+        let done = BrOp::new(ctx, join, vec![]);
+        self.append(ctx, done.get_operation(), Some(dest));
+
+        self.current = Some(join);
     }
 
     /// Whether the nominal-String capacity `field` marks an owned buffer

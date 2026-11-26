@@ -26,44 +26,54 @@ impl FnLowering<'_> {
         // A nominal String's byte buffer (the VM's `write_to` bridge reads
         // the same bytes), or a `StringSpan` view's (`{data, size}` at the
         // same offsets).
-        if let Some(ptr) = self.string_storage(ctx, arg)? {
-            let (data, size) = self.string_parts(ctx, ptr, dest);
+        if let Some((data, size)) = self.stored_string_parts(ctx, arg, dest)? {
             self.write_stdout(ctx, data, size, dest);
             return Ok(true);
         }
         Ok(false)
     }
 
-    /// The storage of a nominal String or `StringSpan` register, or of the
-    /// one a reference register addresses (a memory-only `read` operand
-    /// passed as its `!lit.ref`), when `arg` is either.
-    pub(super) fn string_storage(
+    /// The `(data, size)` of a nominal String or `StringSpan` register, or
+    /// of the one a reference register addresses (a memory-only `read`
+    /// operand passed as its `!lit.ref`), when `arg` is either: a String
+    /// read in any of its forms ([`Self::nominal_string_parts`]), a span's
+    /// leading `{data, size}` words.
+    pub(super) fn stored_string_parts(
         &mut self,
         ctx: &mut Context,
         arg: Reg,
-    ) -> Result<Option<Value>, PlironError> {
-        let is_string = |ty: &Ty| {
-            ty.kind().as_non_simd_struct().is_some_and(|(name, _)| {
-                mojito_symbol::symbol::is_stdlib_string_struct(name)
-                    || mojito_types::types::is_stdlib_string_span_struct(name)
+        dest: Reg,
+    ) -> Result<Option<(Value, Value)>, PlironError> {
+        // Whether `ty` is a String (`Some(true)`) or a span (`Some(false)`).
+        let string_kind = |ty: &Ty| {
+            ty.kind().as_non_simd_struct().and_then(|(name, _)| {
+                if mojito_symbol::symbol::is_stdlib_string_struct(name) {
+                    Some(true)
+                } else {
+                    mojito_types::types::is_stdlib_string_span_struct(name).then_some(false)
+                }
             })
         };
         // A builtin takes no reference, so a reference operand is a
         // by-address one ([`mojito_mir::mir::addressed_receiver`]).
-        let addressed = self
-            .func
-            .reg_types
-            .get(&arg.0)
-            .and_then(mojito_mir::mir::addressed_receiver);
-        match addressed {
-            Some(reference) if is_string(&reference.referent) => {
-                self.reg_value(ctx, arg, ScalarTy::PTR).map(Some)
+        let reg_ty = self.func.reg_types.get(&arg.0);
+        let addressed = reg_ty.and_then(mojito_mir::mir::addressed_receiver);
+        let storage = match addressed {
+            Some(reference) if let Some(string) = string_kind(&reference.referent) => {
+                Some((self.reg_value(ctx, arg, ScalarTy::PTR)?, string))
             }
-            Some(_) if self.func.reg_types.get(&arg.0).is_some_and(is_string) => {
-                self.reg_ptr(ctx, arg).map(Some)
+            Some(_) if let Some(string) = reg_ty.and_then(string_kind) => {
+                Some((self.reg_ptr(ctx, arg)?, string))
             }
-            _ => Ok(None),
-        }
+            _ => None,
+        };
+        Ok(storage.map(|(ptr, string)| {
+            if string {
+                self.nominal_string_parts(ctx, ptr, dest)
+            } else {
+                self.string_parts(ctx, ptr, dest)
+            }
+        }))
     }
 
     /// The display bytes of one `DType` value, or with `repr` its

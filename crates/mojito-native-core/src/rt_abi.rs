@@ -19,7 +19,7 @@ use crate::target::NativeTarget;
 /// The runtime ABI version this compiler emits against. Must equal
 /// `mojito_runtime::ABI_VERSION`; the linked runtime exports it as the
 /// inspectable data symbol [`ABI_VERSION_SYMBOL`].
-pub const MJRT_ABI_VERSION: u32 = 7;
+pub const MJRT_ABI_VERSION: u32 = 8;
 
 /// The flag the library `String` sets in an `MjString`'s `cap` field when
 /// it owns `data` (upstream's `String.FLAG_IS_REF_COUNTED`).
@@ -27,6 +27,22 @@ pub const MJRT_ABI_VERSION: u32 = 7;
 /// The field's other bits are then the buffer's capacity in 8-byte units. A
 /// `cap` without it is a static string over bytes no String frees or writes.
 pub const MJ_STRING_FLAG_IS_REF_COUNTED: i64 = 1 << 62;
+
+/// The flag the library `String` sets in an `MjString`'s `cap` field when
+/// it is inline (upstream's `String.FLAG_IS_INLINE`).
+///
+/// The first [`MJ_STRING_INLINE_CAPACITY`] bytes of the three fields then
+/// hold the UTF-8 data, and the five bits of `cap` from
+/// [`MJ_STRING_INLINE_LENGTH_START`] its length.
+pub const MJ_STRING_FLAG_IS_INLINE: i64 = 1 << 63;
+
+/// The most bytes an inline `MjString` holds (upstream's
+/// `String.INLINE_CAPACITY`).
+pub const MJ_STRING_INLINE_CAPACITY: i64 = 23;
+
+/// The bit of an inline `MjString`'s `cap` where its 5-bit length starts
+/// (upstream's `String.INLINE_LENGTH_START`).
+pub const MJ_STRING_INLINE_LENGTH_START: i64 = 56;
 
 /// The exported `u32` data symbol carrying the runtime's ABI version.
 pub const ABI_VERSION_SYMBOL: &str = "mjrt_abi_version";
@@ -264,11 +280,13 @@ pub const RT_SYMBOLS: &[RtSig] = &[
         noreturn: false,
         since: 4,
         ownership: "borrows out (>= 24 writable bytes, caller-owned) and \
-                    writes an owned MjString: data is a fresh mjrt_alloc \
-                    allocation of size rounded up to 8 bytes the caller owns, \
-                    cap its 8-byte units flagged MJ_STRING_FLAG_IS_REF_COUNTED, \
-                    size the line length (trailing \\n then \\r stripped); EOF \
-                    yields size 0 with a valid header-only allocation",
+                    writes an MjString of the line (trailing \\n then \\r \
+                    stripped): up to MJ_STRING_INLINE_CAPACITY bytes inline \
+                    (MJ_STRING_FLAG_IS_INLINE, the length in cap's top byte), \
+                    EOF the empty inline string; a longer line owned, data a \
+                    fresh mjrt_alloc allocation of size rounded up to 8 bytes \
+                    the caller owns, cap its 8-byte units flagged \
+                    MJ_STRING_FLAG_IS_REF_COUNTED",
         failure: "traps (stdin-failure) on a read error; EOF is not an error",
     },
 ];

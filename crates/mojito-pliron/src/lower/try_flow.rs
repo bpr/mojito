@@ -92,13 +92,13 @@ impl FnLowering<'_> {
                     && mojito_symbol::symbol::is_stdlib_string_struct(name) =>
             {
                 let ptr = self.reg_ptr(ctx, reg)?;
-                Ok(self.string_parts(ctx, ptr, dest))
+                Ok(self.nominal_string_parts(ctx, ptr, dest))
             }
             // An `Error` displays as its message, whose data and length
             // lead it as a String's do.
             Some(kind) if kind.is_error() => {
                 let ptr = self.reg_ptr(ctx, reg)?;
-                Ok(self.string_parts(ctx, ptr, dest))
+                Ok(self.nominal_string_parts(ctx, ptr, dest))
             }
             _ => Err(self.unsupported_reg(format!("string value in register %r{}", reg.0), dest)),
         }

@@ -272,32 +272,13 @@ impl VmBackend {
         Ok(())
     }
 
-    /// The size of `ty` under the native layout of the program running.
-    fn layout_size(&self, ty: &Ty) -> Result<i64, RuntimeError> {
-        self.layout_cx()?
-            .layout_of(ty)
-            .map(|layout| layout.size as i64)
-            .map_err(|error| unsupported(&format!("`{ty}` has no layout: {error}")))
-    }
-
-    /// The layout context of the program running.
-    fn layout_cx(&self) -> Result<LayoutCx<'_>, RuntimeError> {
-        let layout = self
-            .layout
-            .as_ref()
-            .ok_or_else(|| unsupported("no program layout is configured"))?;
-        let target = self
-            .target
-            .as_ref()
-            .ok_or_else(|| unsupported("no native target lays storage out"))?;
-        Ok(LayoutCx {
-            target,
-            structs: &layout.fields,
-        })
-    }
-
     /// The bytes of `value`, held at `ty`, into `out` (`ty`'s size).
-    fn encode_bytes(&self, value: &Value, ty: &Ty, out: &mut [u8]) -> Result<(), RuntimeError> {
+    pub(super) fn encode_bytes(
+        &self,
+        value: &Value,
+        ty: &Ty,
+        out: &mut [u8],
+    ) -> Result<(), RuntimeError> {
         if out.is_empty() {
             return Ok(());
         }
@@ -340,7 +321,7 @@ impl VmBackend {
     }
 
     /// The value of `ty` whose bytes are `bytes` (`ty`'s size).
-    fn decode_bytes(&self, bytes: &[u8], ty: &Ty) -> Result<Value, RuntimeError> {
+    pub(super) fn decode_bytes(&self, bytes: &[u8], ty: &Ty) -> Result<Value, RuntimeError> {
         if let Some((dtype, width)) = crate::runtime::lane_shape(ty) {
             return decode_lanes(bytes, dtype, width);
         }
@@ -380,6 +361,30 @@ impl VmBackend {
                 Ok(Value::Struct { name, fields })
             }
         }
+    }
+
+    /// The size of `ty` under the native layout of the program running.
+    fn layout_size(&self, ty: &Ty) -> Result<i64, RuntimeError> {
+        self.layout_cx()?
+            .layout_of(ty)
+            .map(|layout| layout.size as i64)
+            .map_err(|error| unsupported(&format!("`{ty}` has no layout: {error}")))
+    }
+
+    /// The layout context of the program running.
+    fn layout_cx(&self) -> Result<LayoutCx<'_>, RuntimeError> {
+        let layout = self
+            .layout
+            .as_ref()
+            .ok_or_else(|| unsupported("no program layout is configured"))?;
+        let target = self
+            .target
+            .as_ref()
+            .ok_or_else(|| unsupported("no native target lays storage out"))?;
+        Ok(LayoutCx {
+            target,
+            structs: &layout.fields,
+        })
     }
 
     /// How a composite `ty` holds its bytes.

@@ -32,7 +32,7 @@ impl FnLowering<'_> {
 
     /// A lifecycle event carrying the message of the `MjError` at `storage`.
     pub(super) fn emit_trace_error(&mut self, ctx: &mut Context, kind: u32, storage: Value) {
-        let (data, size) = self.string_parts(ctx, storage, Reg(u32::MAX));
+        let (data, size) = self.nominal_string_parts(ctx, storage, Reg(u32::MAX));
         self.emit_trace(ctx, kind, data, size);
     }
 
@@ -123,13 +123,11 @@ impl FnLowering<'_> {
             {
                 let ptr = self.reg_ptr(ctx, src)?;
                 if self.mir_owned.contains(&src.0) {
-                    // An owned register the raise consumes moves, static or
-                    // owning its buffer.
-                    let (data, size) = self.string_parts(ctx, ptr, src);
-                    let cap = self.string_cap(ctx, ptr, src);
-                    self.store_string_fields(ctx, storage, data, size, cap, src);
+                    // An owned register the raise consumes moves, in any
+                    // form: its three words, as the `Error` arm moves.
+                    self.mem_copy(ctx, storage, ptr, 24, src);
                 } else {
-                    let (data, size) = self.string_parts(ctx, ptr, src);
+                    let (data, size) = self.nominal_string_parts(ctx, ptr, src);
                     self.store_owned_string_copy(ctx, storage, data, size, src);
                 }
                 Ok(())

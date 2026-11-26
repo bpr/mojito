@@ -1122,6 +1122,7 @@ assets/ok/pointer_field_deref_index.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_deref_receiver_not_self.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_drain_mut_method.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_fieldwise_init_binder.mojo	main	exe-differential	sanitized
+assets/ok/pointer_field_holds_text_bytes.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_imm_origin_cast_read.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_iterator_storage.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_mut_origin_plain_self_in_place.mojo	main	exe-differential	sanitized
@@ -1444,6 +1445,7 @@ assets/ok/string_escapes.mojo	main	exe-differential	sanitized
 assets/ok/string_format_declared.mojo	main	exe-differential	sanitized
 assets/ok/string_grapheme_iteration.mojo	main	exe-differential	sanitized
 assets/ok/string_iadd_view_operand.mojo	main	exe-differential	sanitized
+assets/ok/string_inline_form.mojo	main	exe-differential	sanitized
 assets/ok/string_iterators_upstream.mojo	main	exe-differential	sanitized
 assets/ok/string_literal_bytes.mojo	main	exe-differential	sanitized
 assets/ok/string_literal_construction_copy.mojo	main	exe-differential	sanitized

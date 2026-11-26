@@ -2198,7 +2198,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `VariantLayout`, `compose`), `native/mangle.rs` (injective C-safe `mj_`
   symbol escaping; `exit`/`mjrt_*`/`mjstr.*`/`main` sit outside the mangle
   image), and `native/rt_abi.rs` (the runtime C ABI contract table —
-  `MJRT_ABI_VERSION`, trap categories, `RT_SYMBOLS`/`RT_DATA_SYMBOLS`/
+  `MJRT_ABI_VERSION`, the `MjString` form flags and inline constants, trap
+  categories, `RT_SYMBOLS`/`RT_DATA_SYMBOLS`/
   `RT_TYPES`, `type_layout`).
 - `crates/mojito-runtime` (workspace member, independently versioned,
   dependency-free) implements that contract as the linked `mjrt_*` C ABI:
@@ -2231,7 +2232,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `CompileOptions::trace_lifecycle`, and the exe wrapper that references
   `mjrt_version` and consumes a raising entry's outcome),
   `lower/module_env.rs`'s `stamp_target_attributes` (`"target-cpu"`/
-  `"target-features"` on every defined function),
+  `"target-features"` on every defined function), `lower/release.rs`'s
+  nominal-String helpers (`emit_nominal_string_parts`, the branch-free
+  inline-aware `(data, size)` reader that `FnLowering::nominal_string_parts`
+  and the exe wrapper's unhandled-error report share; `string_parts` for a
+  `StringSpan` or `MjStrDesc`; `store_owned_string_copy`, which builds the
+  inline or owned form by length), `lower/print.rs`'s `stored_string_parts`
+  (a String or `StringSpan` register's text),
   `backend/pliron/emit.rs` (target stamping onto every LLVM module, LLVM
   IR/bitcode/object/exe via clang `--target`, runtime-archive discovery and
   linking, plus the `opt`-subprocess release pipeline),
@@ -2347,7 +2354,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   narrowing, address, reads, and writes (`view_projection`,
   `view_address`, `view_read`, `view_write`), the native-layout codec
   (`encode_bytes`, `decode_bytes`, over `ProgramLayout`, which
-  `VmBackend::configure` stashes), and the byte runs a libc buffer reads
+  `VmBackend::configure` stashes; `values.rs`'s String bridges
+  `string_struct_literal` and `materialize_string_struct` read and build an
+  inline String's words through it), and the byte runs a libc buffer reads
   and writes through any pointer (`read_byte`, `read_byte_run`,
   `write_byte_run`).
 - `backend/vm/adapters.rs` owns checked-result adapters and dunder-backed

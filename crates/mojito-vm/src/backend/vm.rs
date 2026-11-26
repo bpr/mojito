@@ -709,7 +709,11 @@ impl VmBackend {
     /// an integer held under a `Pointer` or `!kgen.pointer` access decodes to the pointer whose
     /// address it is ([`VmBackend::address_pointer`]), as upstream's
     /// `Pointer(unsafe_from_address=)` reads an `Int` as a pointer, and any
-    /// other value reads as `runtime::read_at` reads it.
+    /// other value reads as `runtime::read_at` reads it. An integer naming no
+    /// storage the VM holds stays the integer: upstream holds a pointer's
+    /// address as plain bits (an inline `String`'s text overwrites its
+    /// pointer word), and the VM refuses such a pointer only where an access
+    /// dereferences it.
     fn read_typed(
         &self,
         prog: &Prog,
@@ -725,10 +729,9 @@ impl VmBackend {
             .filter(|ty| !matches!(ty.kind(), mojito_types::types::TyKind::Ref(_)))
             .and_then(crate::runtime::address_pointee);
         match address.zip(pointee) {
-            Some((address, pointee)) => {
-                let pointer = self.address_pointer(prog, address, pointee)?;
-                Ok(address_as(&prog.structs, pointer, ty))
-            }
+            Some((address, pointee)) => Ok(self
+                .address_pointer(prog, address, pointee)
+                .map_or(value, |pointer| address_as(&prog.structs, pointer, ty))),
             _ => crate::runtime::read_at(value, ty),
         }
     }
@@ -2395,6 +2398,19 @@ mod pointer_storage_tests {
         );
         assert_eq!(crate::runtime::pointer_address(0, 512, 8), 4096);
         assert!(vm.address_pointer(&prog, 4097, &int).is_err());
+    }
+
+    #[test]
+    fn undecodable_integer_read_as_a_pointer_stays_its_bits() {
+        let vm = VmBackend::new();
+        let prog = empty_program();
+        let pointer = Ty::kgen_pointer(Ty::int(), mojito_types::types::AddressSpaceSlot::GENERIC);
+        let text = 0x6867_6665_6463_6261;
+        assert_eq!(
+            vm.read_typed(&prog, Value::Int(text), Some(&pointer))
+                .unwrap(),
+            Value::Int(text)
+        );
     }
 
     #[test]
