@@ -115,6 +115,10 @@ pub struct VmBackend {
     /// takes when its integer address is read ([`VmBackend::place_address`]),
     /// by frame, slot, and the projection up to its element index.
     place_allocations: HashMap<(u64, usize, Vec<RefProjection>), u64>,
+    /// The place each synthetic allocation id addresses, by id less
+    /// `PLACE_ALLOCATION_BASE`: the inverse of `place_allocations`, which
+    /// [`VmBackend::address_pointer`] decodes an integer address through.
+    place_addresses: Vec<PlaceAddress>,
     /// The target whose layout scales an element offset into the byte
     /// address `pop.pointer_to_index` reads ([`VmBackend::element_stride`]):
     /// the compilation's, which every layout query was folded for.
@@ -321,7 +325,12 @@ impl VmBackend {
     fn heap_store(&mut self, region: usize, slot: usize, value: Value) {
         let never_written = matches!(value, Value::Moved | Value::Undef);
         self.heap[region].never_written[slot] = never_written;
-        self.heap[region].slots[slot] = if never_written { Value::Moved } else { value };
+        let held = &mut self.heap[region].slots[slot];
+        *held = if never_written {
+            Value::Moved
+        } else {
+            crate::runtime::keep_held(held, value)
+        };
     }
 
     /// Move one initialized raw-storage value out, leaving an uninitialized
@@ -593,8 +602,103 @@ impl VmBackend {
         let allocation = *self
             .place_allocations
             .entry((frame, slot, base.to_vec()))
-            .or_insert(PLACE_ALLOCATION_BASE + next);
+            .or_insert_with(|| {
+                self.place_addresses.push(PlaceAddress {
+                    frame,
+                    slot,
+                    base: base.to_vec(),
+                    tail: match projection.last() {
+                        Some(RefProjection::Index(_)) => PlaceTail::Index,
+                        Some(RefProjection::Deref) => PlaceTail::Deref,
+                        _ => PlaceTail::Whole,
+                    },
+                });
+                PLACE_ALLOCATION_BASE + next
+            });
         crate::runtime::pointer_address(allocation, index, stride)
+    }
+
+    /// The pointer to `pointee` elements whose integer address is
+    /// `address`: upstream's `pop.index_to_pointer`, the inverse of
+    /// [`VmBackend::place_address`] and `runtime::pointer_address`. The
+    /// high word names a heap allocation, a place's synthetic allocation,
+    /// or none (a raw address, at which the VM holds no storage), and the
+    /// low word the element offset's byte distance.
+    ///
+    /// A place's address decodes to the projection it was first minted
+    /// from: `place_address` gives a place and its pointee (`[..]` and
+    /// `[.., Deref]`) one address, so the place minted first is the one
+    /// read back.
+    fn address_pointer(
+        &self,
+        prog: &Prog,
+        address: i64,
+        pointee: &Ty,
+    ) -> Result<Value, RuntimeError> {
+        let stride = self.element_stride(prog, pointee)?;
+        let allocation = (address as u64) >> 32;
+        let distance = i64::from(address as u32);
+        let undecodable = || {
+            RuntimeError::Unsupported(format!(
+                "vm: the integer address {address:#x} names no `{pointee}` element the VM holds"
+            ))
+        };
+        let offset = match stride {
+            0 => 0,
+            stride if distance % stride == 0 => distance / stride,
+            _ => return Err(undecodable()),
+        };
+        if allocation < PLACE_ALLOCATION_BASE {
+            return Ok(Value::Pointer { allocation, offset });
+        }
+        let place = usize::try_from(allocation - PLACE_ALLOCATION_BASE)
+            .ok()
+            .and_then(|index| self.place_addresses.get(index))
+            .ok_or_else(undecodable)?;
+        let mut projection = place.base.clone();
+        match (place.tail, offset) {
+            (PlaceTail::Index, offset) => {
+                projection.push(RefProjection::Index(
+                    usize::try_from(offset).map_err(|_| undecodable())?,
+                ));
+            }
+            (PlaceTail::Deref, 0) => projection.push(RefProjection::Deref),
+            (PlaceTail::Whole, 0) => {}
+            _ => return Err(undecodable()),
+        }
+        Ok(Value::PlacePointer {
+            frame: place.frame,
+            slot: place.slot,
+            projection,
+        })
+    }
+
+    /// The value a typed access at `ty` reads from memory holding `value`:
+    /// an integer held under a `Pointer` or `!kgen.pointer` access decodes to the pointer whose
+    /// address it is ([`VmBackend::address_pointer`]), as upstream's
+    /// `Pointer(unsafe_from_address=)` reads an `Int` as a pointer, and any
+    /// other value reads as `runtime::read_at` reads it.
+    fn read_typed(
+        &self,
+        prog: &Prog,
+        value: Value,
+        ty: Option<&Ty>,
+    ) -> Result<Value, RuntimeError> {
+        let address = match value {
+            Value::Int(address) => Some(address),
+            Value::UInt(address) => Some(address as i64),
+            _ => None,
+        };
+        let pointee = ty
+            .filter(|ty| !matches!(ty.kind(), mojito_types::types::TyKind::Ref(_)))
+            .and_then(crate::runtime::address_pointee);
+        match address.zip(pointee) {
+            Some((address, pointee)) => {
+                let pointer = self.address_pointer(prog, address, pointee)?;
+                Ok(address_as(&prog.structs, pointer, ty))
+            }
+            _ => crate::runtime::read_at(value, ty),
+        }
     }
 
     /// The byte stride of a `pointee` element under the VM's target
@@ -2057,6 +2161,27 @@ mod places;
 mod regions;
 use regions::{RegionCursor, Transfer};
 
+/// The place a synthetic allocation id addresses
+/// ([`VmBackend::place_address`]): its frame, slot, and projection up to
+/// the element its address's offset counts.
+#[derive(Debug, Clone)]
+struct PlaceAddress {
+    frame: u64,
+    slot: usize,
+    base: Vec<RefProjection>,
+    tail: PlaceTail,
+}
+
+/// How the place an allocation id was first minted from ends past its
+/// base: an element index its address's offset is, the base's pointee, or
+/// the base itself.
+#[derive(Debug, Clone, Copy)]
+enum PlaceTail {
+    Index,
+    Deref,
+    Whole,
+}
+
 #[cfg(test)]
 mod held_struct_tests {
     use super::*;
@@ -2190,6 +2315,52 @@ mod pointer_storage_tests {
     /// struct does.
     fn freeze(vm: &VmBackend, value: Value) -> Result<CtValue, RuntimeError> {
         vm.freeze_value(&empty_program(), value, None, &mut HashSet::new())
+    }
+
+    #[test]
+    fn integer_address_decodes_to_the_pointer_it_was_read_from() {
+        let mut vm = VmBackend::new();
+        let prog = empty_program();
+        let int = Ty::int();
+        let decode = |vm: &VmBackend, address| vm.address_pointer(&prog, address, &int).unwrap();
+        let place = vm.place_address(3, 2, &[], 8);
+        assert_eq!(
+            decode(&vm, place),
+            Value::PlacePointer {
+                frame: 3,
+                slot: 2,
+                projection: Vec::new()
+            }
+        );
+        let element = vm.place_address(3, 4, &[RefProjection::Index(2)], 8);
+        assert_eq!(
+            decode(&vm, element),
+            Value::PlacePointer {
+                frame: 3,
+                slot: 4,
+                projection: vec![RefProjection::Index(2)]
+            }
+        );
+        let Value::Pointer { allocation, .. } = vm.heap_alloc(3, 8).expect("allocation") else {
+            unreachable!("heap allocator returns a pointer")
+        };
+        assert_eq!(
+            decode(&vm, crate::runtime::pointer_address(allocation, 1, 8)),
+            Value::Pointer {
+                allocation,
+                offset: 1
+            }
+        );
+        let raw = decode(&vm, 4096);
+        assert_eq!(
+            raw,
+            Value::Pointer {
+                allocation: 0,
+                offset: 512
+            }
+        );
+        assert_eq!(crate::runtime::pointer_address(0, 512, 8), 4096);
+        assert!(vm.address_pointer(&prog, 4097, &int).is_err());
     }
 
     #[test]

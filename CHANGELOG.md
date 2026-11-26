@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The VM now runs a `Pointer.unsafe_bitcast` to a scalar or vector of
+  another dtype and one bit width, as the pin and native code do (R2201):
+  a read through the retyped pointer reinterprets the held bits and a
+  write keeps the held dtype, so `Pointer(to=x).unsafe_bitcast[Int8]()[]`
+  over `x: UInt8 = 200` prints `-56` instead of being refused. Upstream's
+  `Pointer(unsafe_from_address=)` now runs on the VM too, which decodes an
+  `Int` read as a pointer back into the place or heap element it
+  addresses. A view at a differing layout stays refused (R2602).
+
 - The native backend now copies and moves a `String` by running the
   library's `__init__(copy:)` and `__init__(deinit move:)`, as the VM does,
   instead of its own byte-copy bridge (R2605). An edit to either

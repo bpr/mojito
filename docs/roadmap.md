@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2606**.
+Next free ID: **R2608**.
 
 ## Ordered Work
 
@@ -1060,6 +1060,25 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Probe: `scripts/smoke --suites` reports the failure on master before
     R2321 landed.
   - Found while landing R2321 (2026-11-17).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2606 A pointer `Pointer(unsafe_from_address=)` builds fails LLVM
+  verification when its address is read or its pointee stored**
+
+  Natively, `Int(p)` of, or `p[] = v` through, a local `p` the declared
+  `unsafe_from_address=` initializer builds fails with "IR verification
+  failed … Expected operand type llvm.ptr, but found builtin.integer". A
+  read `p[]` runs, and the pin runs all three.
+  - The body is `self = Pointer(to=unsafe_from_address).unsafe_bitcast[type_of(self)]()[]`,
+    an `Int` slot read as a pointer.
+  - Probe: `print(Int(Pointer[Int, MutAnyOrigin](unsafe_from_address=4096)))`
+    prints `4096` at the pin and on the VM. Once fixed, it makes an
+    `assets/ok` fixture.
+  - Probe: `var p = Pointer[Int, origin_of(x)](unsafe_from_address=Int(Pointer(to=x)))`,
+    then `p[] = 7` and `print(x)`, prints `7` at the pin and on the VM;
+    add it to `assets/ok/pointer_unsafe_from_address.mojo` once fixed.
+  - Found while landing R2201 (2026-11-25).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -12036,8 +12055,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     a `SIMD[.int, size]`.
   - Probe: upstream's `masked_load[4](ptr, mask, passthrough)` and
     `gather(base, mask, passthrough)` over a `float32` buffer.
-  - Depends on R2035 (a pointer operand), R221 (`unsafe_bitcast`, for
-    `gather` and `scatter`), and R2201 (the VM's read of that retype).
+  - Depends on R2035 (a pointer operand) and R221 (`unsafe_bitcast`, for
+    `gather` and `scatter`).
+  - The VM reads a `SIMD[.int, size]` as addresses lane by lane through
+    `VmBackend::address_pointer`, the decode `Pointer(unsafe_from_address=)`
+    reads through.
   - Model: Opus, Not Planned.
 
 - [ ] **R2036 The remaining target-independent LLVM intrinsics the pin
@@ -13375,7 +13397,7 @@ residue found inside a task moves to the task that owns its fix.
     `_Null` one runs natively, and the VM refuses it.
   - Port `_nicheable` and the four members verbatim once those hold.
   - Found while landing R1979 (2026-11-08).
-  - Depends on R942 and R2201 (the VM's retyped pointee).
+  - Depends on R942.
   - Model: Opus, Not Planned.
 
 - [ ] **R197 Compile-time Dict/Set key identity ignores a user struct's
@@ -13609,48 +13631,36 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2201 The VM refuses a `Pointer.unsafe_bitcast` to a pointee it
-  holds as another type**
+- [ ] **R2607 The VM holds a `MaybeUninit[T]` as a wrapper of its own, so
+  a pointer view between `T` and `MaybeUninit[T]` is refused**
 
-  Upstream's `pop.pointer.bitcast` reinterprets the bytes at an address,
-  where the VM's heap and frame slots hold one typed `Value` per element.
-  - So `runtime::pointer_bitcast_preserves_pointee` (`mojito-vm`) runs a
-    bitcast only between pointees that are one type up to origins, a
-    `!lit.ref` pointee counting as the `Pointer` it is held as, and
-    refuses any other as unsupported.
-  - Native code runs every retype, as at the pin.
-  - Lever: reinterpret a scalar or SIMD value read or written through the
-    retyped pointer when the two dtypes have one bit width, and keep
-    refusing layouts that differ.
-  - Probe: `Pointer(to=x).unsafe_bitcast[Int8]()[]` over `x: UInt8 = 200`
-    prints `-56` at the pin and natively, and is refused on the VM.
-  - Probe: R2202's `StringLiteral.ptr`, which bitcasts the pin's `si8`
-    string address to `Byte`.
-  - Probe: upstream's `Pointer(unsafe_from_address=)`, which reads an
-    `Int` as a pointer through `Pointer(to=address).unsafe_bitcast[...]`:
-    `Pointer[Int, origin_of(x)](unsafe_from_address=Int(Pointer(to=x)))[]`
-    prints `5` at the pin and natively, and is refused on the VM. Once
-    fixed, `Int(Pointer[Int, MutAnyOrigin](unsafe_from_address=4096))`
-    (the `IntLiteral` overload) makes an `assets/ok` fixture.
-  - Probe: upstream's `MaybeUninit` pointer views
-    (`.unsafe_bitcast[MaybeUninit[U]]()`) and `Pointer.write_niche`'s
-    `_Null` view of a `MaybeUninit[Self]` (R2055).
-  - Probe: `gather` and `scatter` read a `SIMD[.int, size]` as a
-    `!kgen.simd<size, address>` (R2037).
-  - Probe: ``__mlir_op.`pop.pointer.bitcast`[_type=…](k)`` between two
-    `!kgen.pointer`s of different elements is refused the same way.
-  - Found while landing R221 (2026-11-14).
+  Upstream's `MaybeUninit[T]` has `T`'s layout, so its pointer views
+  (`p.unsafe_bitcast[MaybeUninit[T]]()` and back) read the same bytes. The
+  bundled `MaybeUninit` is a struct over `__UninitStorage[T]`, which the VM
+  holds as `Value::UninitStorage`, so a read through such a view meets a
+  `T` where it expects the wrapper, and `runtime::pointer_bitcast_admits`
+  refuses the retype.
+  - Native code runs these views, as at the pin.
+  - Lever: port upstream's `MaybeUninit` storage shape, then let a typed
+    access through the view wrap or unwrap the held value
+    (`runtime::read_at`, `keep_held`).
+  - Probe: `Pointer(to=x).unsafe_bitcast[MaybeUninit[Int]]()[].unsafe_assume_init()`
+    over `x = 5` prints `5` at the pin and is refused on the VM.
+  - Probe: `Pointer.write_niche`'s `_Null` view of a `MaybeUninit[Self]`
+    (R2055), which is also a differing layout (R2602).
+  - Found while landing R2201 (2026-11-25).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2602 The VM cannot view a value's storage at another layout**
 
   Problem: the VM holds one typed `Value` per heap or frame slot, so a
   `Pointer.unsafe_bitcast` that views a struct's words as bytes, or bytes as
   a wider value, has nothing to read.
-  - R2201's lever reinterprets a scalar of one bit width as another of the
-    same width, and keeps refusing layouts that differ. This is the
-    differing-layout case.
+  - A typed access already reinterprets a scalar or vector of one total
+    bit width (`runtime::read_at`, `keep_held`), and
+    `runtime::pointer_bitcast_admits` refuses layouts that differ. This is
+    the differing-layout case.
   - Native code runs every such view, as at the pin.
   - Probe: upstream's inline `String` reads its bytes through
     `Pointer(to=self).unsafe_bitcast[Byte]()` over the
@@ -13658,11 +13668,19 @@ residue found inside a task moves to the task that owns its fix.
   - Probe: upstream's heap `String` keeps its reference count in the eight
     bytes before its data, read through `unsafe_bitcast[Atomic[Int]]()` of
     the byte buffer (R2604).
+  - Probe: a `bool` lane through a byte view (`Pointer(to=b).unsafe_bitcast[UInt8]()[]`
+    over `b = True`), which a vector packs as one bit and memory holds as
+    a byte; the sub-byte, 128- and 256-bit, `bfloat16`, and float8/6/4
+    dtypes the VM holds no lanes of follow it.
+  - Probe: a pointer read as an `Int`
+    (`Pointer(to=p).unsafe_bitcast[Int]()[]`), whose element stride the
+    read does not know, and an `Int` read of a slot a pointer was stored
+    into through an `Int`-to-pointer view, which `read_at` refuses.
   - The lever is a byte-addressed view of a slot range: reading or writing
     a `Byte` through a struct view splits or rebuilds the field's value,
     and a wider read through a byte buffer assembles its bytes.
   - Found while landing R2600 (2026-11-25).
-  - Depends on R2201 (the same-width retype it extends).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R2202 `pop.string.address` gives a `Byte` pointer, where the pin's
@@ -13677,7 +13695,7 @@ residue found inside a task moves to the task that owns its fix.
     (the notes in `stdlib/std/builtin/string_literal.mojo` and
     `stdlib/std/string.mojo`).
   - Drop `is_bundled_kgen_string_source`'s address gate.
-  - Depends on R2201 (the VM's `si8` to `Byte` retype).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R222 `CStringSlice` views `Byte` elements instead of `c_char`**

@@ -83,7 +83,7 @@ impl VmBackend {
                 }
             }
         };
-        Ok(value)
+        self.read_typed(prog, value, place.ty.as_ref())
     }
 
     /// The value a call passes for its operand `register`, as upstream's
@@ -133,6 +133,7 @@ impl VmBackend {
         Ok(match addressed {
             Some(reference) if matches!(value, Value::Ref { .. } | Value::Pointer { .. }) => {
                 let referent = self.read_reference(&value, frame_id, vars)?;
+                let referent = crate::runtime::read_at(referent, Some(&reference.referent))?;
                 let reference_operand =
                     self.call_operand(prog, function, (frame_id, regs, vars), register);
                 (referent, Some(&reference.referent), Some(reference_operand))
@@ -146,7 +147,7 @@ impl VmBackend {
                 && ty.is_none_or(|ty| mojito_mir::mir::verify::reference_record(ty).is_none()) =>
             {
                 let referent = self.read_reference(&value, frame_id, vars)?;
-                (referent, ty, Some(value))
+                (crate::runtime::read_at(referent, ty)?, ty, Some(value))
             }
             _ => (value, ty, None),
         })
@@ -179,6 +180,7 @@ impl VmBackend {
         Ok(match addressed {
             Some(reference) if matches!(value, Value::Ref { .. } | Value::Pointer { .. }) => {
                 let referent = self.read_reference(&value, frame_id, vars)?;
+                let referent = crate::runtime::read_at(referent, Some(&reference.referent))?;
                 operand(referent, Some(&reference.referent))
             }
             _ => operand(value, ty),
@@ -367,22 +369,40 @@ impl VmBackend {
                         "vm: kgen.struct.load_indirect over no struct of pointers".to_string(),
                     ));
                 };
+                let elements = match prog.mir.functions[function]
+                    .1
+                    .reg_types
+                    .get(&dest.0)
+                    .map(Ty::kind)
+                {
+                    Some(TyKind::Tuple(elements)) => elements.as_slice(),
+                    _ => &[],
+                };
                 let loaded = references
                     .iter()
-                    .map(|handle| self.read_reference(handle, frame_id, vars))
+                    .enumerate()
+                    .map(|(index, handle)| {
+                        let value = self.read_reference(handle, frame_id, vars)?;
+                        crate::runtime::read_at(value, elements.get(index))
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
                 regs[dest.0 as usize] = Value::Tuple(loaded);
             }
             MirInstr::ReadRef { dest, reference } => {
                 let handle = regs[reference.0 as usize].clone();
-                regs[dest.0 as usize] =
-                    self.read_reference(&handle, frame_id, vars)
-                        .map_err(|error| {
-                            RuntimeError::TypeError(format!(
-                                "vm: ReadRef r{} received {handle:?}: {error}",
-                                reference.0
-                            ))
-                        })?;
+                let value = self
+                    .read_reference(&handle, frame_id, vars)
+                    .map_err(|error| {
+                        RuntimeError::TypeError(format!(
+                            "vm: ReadRef r{} received {handle:?}: {error}",
+                            reference.0
+                        ))
+                    })?;
+                regs[dest.0 as usize] = self.read_typed(
+                    prog,
+                    value,
+                    prog.mir.functions[function].1.reg_types.get(&dest.0),
+                )?;
             }
             MirInstr::Rebind { .. } => {
                 return Err(parametric_instruction("a value rebind"));
@@ -568,12 +588,12 @@ impl VmBackend {
                     prog.mir.functions[function].1.reg_types.get(&dest.0),
                 );
             }
-            // The heap and frames hold one typed value per element, so an
-            // address retyped to a pointee held differently cannot be
-            // reinterpreted through: the VM refuses it here, at the bitcast.
+            // The address is unchanged; a typed access through it reads the
+            // held value at the access's type (`runtime::read_at`). A retype
+            // no such access answers is refused here, at the bitcast.
             MirInstr::PointerBitcast { dest, value } => {
                 let reg_types = &prog.mir.functions[function].1.reg_types;
-                crate::runtime::pointer_bitcast_preserves_pointee(
+                crate::runtime::pointer_bitcast_admits(
                     reg_types.get(&value.0),
                     reg_types.get(&dest.0),
                 )?;
@@ -1167,7 +1187,7 @@ impl VmBackend {
                 ..
             } => {
                 let index = value_as_index(&regs[index.0 as usize])?;
-                regs[dest.0 as usize] = match &regs[pointer.0 as usize] {
+                let taken = match &regs[pointer.0 as usize] {
                     Value::Pointer { allocation, offset } => {
                         self.heap_take(*allocation, *offset, index)?
                     }
@@ -1183,6 +1203,10 @@ impl VmBackend {
                         ));
                     }
                 };
+                regs[dest.0 as usize] = crate::runtime::read_at(
+                    taken,
+                    prog.mir.functions[function].1.reg_types.get(&dest.0),
+                )?;
             }
             MirInstr::PointerStorageDestroy {
                 dest,
@@ -2063,7 +2087,7 @@ impl VmBackend {
                         "vm: partial use of an already-moved place".into(),
                     ));
                 }
-                regs[dest.0 as usize] = value;
+                regs[dest.0 as usize] = crate::runtime::read_at(value, place.ty.as_ref())?;
             }
             // Iterator protocol over compiler-private storage: only VM-CTFE's
             // explicit ComptimeList, an owned `VariadicList`, and the

@@ -70,7 +70,8 @@ pub enum Value {
         value: Box<Self>,
     },
     /// An `Pointer[T]`: stable allocation identity plus a typed element
-    /// offset. Allocation zero is reserved for non-null dangling placeholders.
+    /// offset. Allocation zero holds no storage: it is the null pointer,
+    /// dangling placeholders, and raw addresses.
     Pointer {
         allocation: u64,
         offset: i64,
@@ -809,13 +810,12 @@ pub const INPUT_EOF_MESSAGE: &str = "EOF";
 /// The synthetic byte address of a VM pointer to elements `stride` bytes
 /// wide.
 ///
-/// The null (allocation 0) pointer is 0; any other is its allocation id in
-/// the high word, so distinct provenances never collide, plus its element
-/// offset's byte distance, as upstream's `pop.pointer_to_index` reads one.
+/// Its allocation id is the high word, so distinct provenances never
+/// collide, and its element offset's byte distance is added, as upstream's
+/// `pop.pointer_to_index` reads one. An allocation-0 pointer (the null
+/// pointer, or a raw address the VM holds no storage at) is that distance
+/// alone.
 pub const fn pointer_address(allocation: u64, offset: i64, stride: i64) -> i64 {
-    if allocation == 0 {
-        return 0;
-    }
     ((allocation as i64) << 32).wrapping_add(offset.wrapping_mul(stride))
 }
 
@@ -832,32 +832,114 @@ pub fn address_pointee(ty: &mojito_types::types::Ty) -> Option<&mojito_types::ty
 
 /// Admit a `pop.pointer.bitcast` from a `from` pointer to a `to` pointer.
 ///
-/// It leaves its pointee read as the VM holds it when the two pointees are
-/// one type up to origins, a `!lit.ref` pointee counting as the `Pointer`
-/// the VM holds it as, and a pointer pointee's mutability, which its held
-/// address does not carry, ignored. Any other retype would need the VM's
-/// typed memory to reinterpret the value it holds, which it refuses.
-pub fn pointer_bitcast_preserves_pointee(
+/// The bitcast keeps the address; a typed access through the result reads
+/// the held value at the access's type ([`read_at`], [`keep_held`]). The VM
+/// holds one typed value per element, so it admits a retype whose accesses
+/// it can answer that way:
+///
+/// - pointees one type up to origins, a `!lit.ref` pointee counting as the
+///   `Pointer` the VM holds it as, and a pointer pointee's mutability, which
+///   its held address does not carry, ignored;
+/// - two register scalars or vectors of byte-or-wider lanes and one total
+///   bit width ([`register_scalar_shape`]), whose bits a read reinterprets;
+/// - an `Int` or `UInt` pointee read as a pointer, upstream's
+///   `Pointer(unsafe_from_address=)`, whose address a read decodes;
+/// - two pointer pointees whose own pointees one of the first two admits,
+///   so the element offset a held pointer counts keeps its byte distance.
+///
+/// It refuses any other retype as a byte view of a differing layout.
+pub fn pointer_bitcast_admits(
     from: Option<&mojito_types::types::Ty>,
     to: Option<&mojito_types::types::Ty>,
 ) -> Result<(), RuntimeError> {
-    use mojito_types::types::erase_origins;
-    let pointee = |ty: Option<&mojito_types::types::Ty>| {
-        ty.and_then(|ty| match ty.kind() {
-            mojito_types::types::TyKind::KgenPointer { element, .. } => Some(element),
-            _ => ty.pointer_layout().map(|(element, _)| element),
-        })
-        .map(|pointee| held_address(&erase_origins(&held_pointee(pointee))))
-    };
-    match (pointee(from), pointee(to)) {
-        (Some(from), Some(to)) if from == to => Ok(()),
-        (Some(from), Some(to)) => Err(RuntimeError::Unsupported(format!(
-            "vm: Pointer.unsafe_bitcast from a {from} pointee to a {to} pointee \
-             reinterprets memory the VM holds as typed values"
-        ))),
-        _ => Err(RuntimeError::TypeError(
+    let pointee = |ty: Option<&mojito_types::types::Ty>| ty.and_then(bitcast_pointee);
+    let (Some(from), Some(to)) = (pointee(from), pointee(to)) else {
+        return Err(RuntimeError::TypeError(
             "vm: pointer.bitcast requires Pointer operands".to_string(),
-        )),
+        ));
+    };
+    let address_read = from
+        .kind()
+        .known_simd()
+        .is_some_and(|(dtype, width)| matches!(dtype, Dtype::Int | Dtype::UInt) && width == 1)
+        && bitcast_pointee(&to).is_some();
+    let pointer_view = bitcast_pointee(&from)
+        .zip(bitcast_pointee(&to))
+        .is_some_and(|(from, to)| same_held_or_reinterpreted(&from, &to));
+    if same_held_or_reinterpreted(&from, &to) || address_read || pointer_view {
+        return Ok(());
+    }
+    Err(RuntimeError::Unsupported(format!(
+        "vm: `pop.pointer.bitcast` from a {from} pointee to a {to} pointee \
+         needs a byte view of a differing layout (R2602)"
+    )))
+}
+
+/// The dtype and lane count of a register scalar or vector type whose bits
+/// a retyped access reinterprets.
+///
+/// It answers a `SIMD` (an `Int`, `UInt`, or scalar alias included), its
+/// `!kgen.simd` storage, an `index`, or a `ui8`, of a byte-or-wider dtype
+/// the VM holds lanes of, and `None` for any other type, a `bool` lane (a
+/// bit in a vector's bits, a byte in memory) included.
+pub fn register_scalar_shape(ty: &mojito_types::types::Ty) -> Option<(Dtype, usize)> {
+    use mojito_types::types::TyKind;
+    let shape = match ty.kind() {
+        TyKind::Index => Some((Dtype::Int, 1)),
+        TyKind::Ui8 => Some((Dtype::UInt8, 1)),
+        TyKind::KgenSimd { .. } => {
+            mojito_types::types::storage_simd(ty).and_then(|vector| vector.kind().known_simd())
+        }
+        kind => kind.known_simd(),
+    };
+    shape
+        .filter(|(dtype, _)| reinterpretable_dtype(*dtype))
+        .and_then(|(dtype, width)| usize::try_from(width).ok().map(|width| (dtype, width)))
+}
+
+/// The value a typed access at `access` reads from memory holding `value`,
+/// as an LLVM `load` of that type reads bytes.
+///
+/// A register scalar or vector held under an access of another
+/// reinterpretable dtype and one total bit width
+/// ([`register_scalar_shape`]) reads its bits at the access's dtype. A
+/// pointer held under such an access would be a pointer's bytes read as a
+/// number, which the VM refuses. Any other value is read as it is held.
+pub fn read_at(
+    value: Value,
+    access: Option<&mojito_types::types::Ty>,
+) -> Result<Value, RuntimeError> {
+    let held = held_scalar_shape(&value);
+    if held.is_none() && !matches!(value, Value::Pointer { .. } | Value::PlacePointer { .. }) {
+        return Ok(value);
+    }
+    let Some((dtype, width)) = access.and_then(register_scalar_shape) else {
+        return Ok(value);
+    };
+    match held {
+        Some(held) if held.0 != dtype && same_bits(held, (dtype, width)) => {
+            simd_bitcast(dtype, width, &value)
+        }
+        Some(_) => Ok(value),
+        None => Err(RuntimeError::Unsupported(format!(
+            "vm: a {} read reads a pointer's bytes as a number (R2602)",
+            dtype.name()
+        ))),
+    }
+}
+
+/// The value a typed write of `written` leaves in memory holding `held`.
+///
+/// It is `written`'s bits at `held`'s dtype when both are register scalars
+/// or vectors of reinterpretable dtypes and one total bit width, so a slot
+/// keeps one representation whatever pointer type wrote it, and `written`
+/// itself otherwise.
+pub fn keep_held(held: &Value, written: Value) -> Value {
+    match (held_scalar_shape(held), held_scalar_shape(&written)) {
+        (Some(slot), Some(value)) if slot.0 != value.0 && same_bits(slot, value) => {
+            simd_bitcast(slot.0, slot.1, &written).unwrap_or(written)
+        }
+        _ => written,
     }
 }
 
@@ -2330,6 +2412,54 @@ const fn low_bits(bits: usize) -> u64 {
     }
 }
 
+/// The pointee of a pointer type a `pop.pointer.bitcast` retypes, as the
+/// VM holds it ([`held_pointee`], [`held_address`]) with its origins erased.
+fn bitcast_pointee(ty: &mojito_types::types::Ty) -> Option<mojito_types::types::Ty> {
+    match ty.kind() {
+        mojito_types::types::TyKind::KgenPointer { element, .. } => Some(element),
+        kind => kind.pointer_layout().map(|(element, _)| element),
+    }
+    .map(|pointee| held_address(&mojito_types::types::erase_origins(&held_pointee(pointee))))
+}
+
+/// Whether a value held as a `from` reads as a `to` unchanged or through
+/// [`read_at`]'s reinterpretation.
+fn same_held_or_reinterpreted(
+    from: &mojito_types::types::Ty,
+    to: &mojito_types::types::Ty,
+) -> bool {
+    from == to
+        || register_scalar_shape(from)
+            .zip(register_scalar_shape(to))
+            .is_some_and(|(from, to)| same_bits(from, to))
+}
+
+/// The dtype and lane count of a held register scalar or vector of a
+/// reinterpretable dtype, read without copying its lanes.
+const fn held_scalar_shape(value: &Value) -> Option<(Dtype, usize)> {
+    match value {
+        Value::Int(_) => Some((Dtype::Int, 1)),
+        Value::UInt(_) => Some((Dtype::UInt, 1)),
+        Value::Float64(_) => Some((Dtype::Float64, 1)),
+        Value::Simd { dtype, lanes } if reinterpretable_dtype(*dtype) => {
+            Some((*dtype, lanes.width()))
+        }
+        _ => None,
+    }
+}
+
+/// Whether two `(dtype, lanes)` shapes have one total bit width.
+const fn same_bits(left: (Dtype, usize), right: (Dtype, usize)) -> bool {
+    left.0.bit_width() as usize * left.1 == right.0.bit_width() as usize * right.1
+}
+
+/// Whether [`simd_bitcast`] reinterprets a lane of `dtype` exactly as memory
+/// holds it: every dtype the VM holds lanes of but `bool`, which a vector's
+/// bits pack as one bit and memory holds as a byte.
+const fn reinterpretable_dtype(dtype: Dtype) -> bool {
+    dtype.has_lane() && !matches!(dtype, Dtype::Bool)
+}
+
 /// `ty` with each pointer it is, or points to, at an immutable static
 /// origin: the address the VM holds for it, whose mutability is no part of
 /// the value.
@@ -2471,5 +2601,91 @@ mod tests {
             simd_bitcast(Dtype::UInt32, 1, &bytes).unwrap(),
             ints(Dtype::UInt32, &[4631])
         );
+    }
+
+    #[test]
+    fn read_at_reinterprets_a_held_scalar_of_one_bit_width() {
+        use mojito_types::types::{SimdDtype, SimdWidth};
+        let scalar = |dtype| Ty::simd(SimdDtype::Known(dtype), SimdWidth::Known(1));
+        let vector = |dtype, width| Ty::simd(SimdDtype::Known(dtype), SimdWidth::Known(width));
+        let ints = |dtype, lanes: &[i128]| Value::Simd {
+            dtype,
+            lanes: SimdLanes::Int(lanes.to_vec()),
+        };
+        assert_eq!(
+            read_at(ints(Dtype::UInt8, &[200]), Some(&scalar(Dtype::Int8))).unwrap(),
+            ints(Dtype::Int8, &[-56])
+        );
+        assert_eq!(
+            read_at(Value::Float64(1.0), Some(&scalar(Dtype::UInt64))).unwrap(),
+            ints(Dtype::UInt64, &[4_607_182_418_800_017_408])
+        );
+        assert_eq!(
+            read_at(
+                ints(Dtype::UInt8, &[1, 2, 3, 4]),
+                Some(&scalar(Dtype::UInt32))
+            )
+            .unwrap(),
+            ints(Dtype::UInt32, &[67_305_985])
+        );
+        assert_eq!(
+            read_at(Value::Int(-1), Some(&vector(Dtype::Int8, 2))).unwrap(),
+            Value::Int(-1)
+        );
+        assert_eq!(
+            read_at(ints(Dtype::UInt8, &[200]), Some(&Ty::bool())).unwrap(),
+            ints(Dtype::UInt8, &[200])
+        );
+        assert!(matches!(
+            read_at(
+                Value::Pointer {
+                    allocation: 1,
+                    offset: 0
+                },
+                Some(&Ty::int())
+            ),
+            Err(RuntimeError::Unsupported(_))
+        ));
+        assert_eq!(
+            keep_held(&ints(Dtype::UInt8, &[200]), ints(Dtype::Int8, &[-1])),
+            ints(Dtype::UInt8, &[255])
+        );
+        assert_eq!(
+            keep_held(&Value::Moved, ints(Dtype::Int8, &[-1])),
+            ints(Dtype::Int8, &[-1])
+        );
+    }
+
+    #[test]
+    fn pointer_bitcast_admits_the_retypes_a_typed_access_answers() {
+        use mojito_types::origin::{Mutability, Origin};
+        use mojito_types::types::{AddressSpaceSlot, SimdDtype, SimdWidth};
+        let scalar = |dtype| Ty::simd(SimdDtype::Known(dtype), SimdWidth::Known(1));
+        let pointer = |pointee| {
+            Ty::pointer(
+                pointee,
+                Origin::Static,
+                Mutability::Mutable,
+                AddressSpaceSlot::GENERIC,
+            )
+        };
+        let admits = |from: Ty, to: Ty| {
+            pointer_bitcast_admits(Some(&pointer(from)), Some(&pointer(to))).is_ok()
+        };
+        assert!(admits(scalar(Dtype::UInt8), scalar(Dtype::Int8)));
+        assert!(admits(scalar(Dtype::Float64), Ty::uint()));
+        assert!(admits(Ty::int(), pointer(Ty::int())));
+        assert!(admits(
+            pointer(scalar(Dtype::UInt8)),
+            pointer(scalar(Dtype::Int8))
+        ));
+        assert!(!admits(scalar(Dtype::UInt8), scalar(Dtype::UInt16)));
+        assert!(!admits(Ty::int(), Ty::bool()));
+        assert!(!admits(scalar(Dtype::Bool), scalar(Dtype::UInt8)));
+        assert!(!admits(pointer(Ty::int()), Ty::int()));
+        assert!(!admits(
+            pointer(scalar(Dtype::UInt8)),
+            pointer(scalar(Dtype::UInt16))
+        ));
     }
 }

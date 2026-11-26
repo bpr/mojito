@@ -394,11 +394,12 @@ impl VmBackend {
             return Ok(());
         }
         let root_type = crate::runtime::type_name(root);
-        *navigate_reference_mut(root, projection).map_err(|error| {
+        let leaf = navigate_reference_mut(root, projection).map_err(|error| {
             RuntimeError::TypeError(format!(
                 "{error}; reference root is {root_type} with projection {projection:?}"
             ))
-        })? = value;
+        })?;
+        *leaf = crate::runtime::keep_held(leaf, value);
         Ok(())
     }
 
@@ -641,11 +642,12 @@ impl VmBackend {
             return Ok(());
         }
         let root_type = crate::runtime::type_name(root);
-        *navigate_reference_mut(root, projection).map_err(|error| {
+        let leaf = navigate_reference_mut(root, projection).map_err(|error| {
             RuntimeError::TypeError(format!(
                 "{error}; reference root is {root_type} with projection {projection:?}"
             ))
-        })? = value;
+        })?;
+        *leaf = crate::runtime::keep_held(leaf, value);
         Ok(())
     }
 
@@ -682,13 +684,14 @@ impl VmBackend {
             return Ok(());
         }
         let root_type = crate::runtime::type_name(&self.heap[region].slots[slot]);
-        *navigate_reference_mut(&mut self.heap[region].slots[slot], projection).map_err(
+        let leaf = navigate_reference_mut(&mut self.heap[region].slots[slot], projection).map_err(
             |error| {
                 RuntimeError::TypeError(format!(
                     "{error}; heap reference root is {root_type} with projection {projection:?}"
                 ))
             },
-        )? = value;
+        )?;
+        *leaf = crate::runtime::keep_held(leaf, value);
         Ok(())
     }
 
