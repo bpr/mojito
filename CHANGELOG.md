@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call's `VariadicList`, in its register type and its constructor's
+  application, and a call's `VariadicPack` are now over their element
+  references' untracked origin instead of `_` (R2635), as upstream's
+  constructor argument check fixes the list's origin from the array it
+  wraps. Output is unchanged.
+
 - A method's own origin binder named by its `ref[o] self` clause now binds
   from the receiver, argument 0 of the call's one solve, instead of
   recording `_` in the call's application (R2634). A place, a temporary, a

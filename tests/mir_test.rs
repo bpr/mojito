@@ -642,6 +642,71 @@ fn read_collector_list_is_not_destroyed() {
 }
 
 #[test]
+fn call_collectors_are_over_their_element_references_origin() {
+    // Upstream's `VariadicList.__init__` takes the element references'
+    // `!pop.array`, so its argument check fixes the list's `origin` to the
+    // references' own; `VariadicPack.__init__` is over its `!lit.ref.pack`'s.
+    use mojito::origin::Origin;
+    use mojito::types::TyArg;
+    let source = "def total(*xs: Int) -> Int:\n    return len(xs)\n\ndef own(var *xs: String) -> Int:\n    return len(xs)\n\ndef show[*Ts: Writable](*args: *Ts):\n    pass\n\ndef main():\n    print(total(1, 2))\n    print(own(String(\"c\")))\n    show(1, \"a\")\n";
+    let compiled = Compiler::default()
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile");
+    let main = mir_function(compiled.mir(), "main");
+    let type_origin = |reg: &Reg| match main.reg_types[&reg.0].kind() {
+        TyKind::Struct(_, arguments) => arguments.iter().find_map(|argument| match argument {
+            TyArg::Origin(origin) => Some(origin.clone()),
+            _ => None,
+        }),
+        _ => None,
+    };
+    let lists: Vec<(Option<Origin>, Option<Origin>)> = nested_instructions(&main.body)
+        .into_iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::Call {
+                func,
+                dest,
+                instantiated_args,
+                ..
+            } if func.0.starts_with("VariadicList.") => {
+                let recorded = match instantiated_args.get(1) {
+                    Some(TyArg::Origin(origin)) => Some(origin.clone()),
+                    _ => None,
+                };
+                Some((recorded, type_origin(dest)))
+            }
+            _ => None,
+        })
+        .collect();
+    let read = Origin::Untracked { mutable: false };
+    let owned = Origin::Untracked { mutable: true };
+    assert_eq!(
+        lists,
+        vec![
+            (Some(read.clone()), Some(read.clone())),
+            (Some(owned.clone()), Some(owned)),
+        ],
+        "{main:#?}"
+    );
+    let packs: Vec<Option<Origin>> = nested_instructions(&main.body)
+        .into_iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::MakeStruct { dest, .. }
+                if matches!(
+                    main.reg_types[&dest.0].kind(),
+                    TyKind::Struct(name, _) if name == "VariadicPack"
+                ) =>
+            {
+                Some(type_origin(dest))
+            }
+            _ => None,
+        })
+        .collect();
+    // `show`'s and each `print`'s.
+    assert_eq!(packs, vec![Some(read); 3], "{main:#?}");
+}
+
+#[test]
 fn verify_rejects_an_untyped_used_slot() {
     let program = |typed: bool| {
         let mut var_tys = HashMap::from([(0, Ty::int())]);

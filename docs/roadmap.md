@@ -62,25 +62,6 @@ R2625–R2640 stage that, in
 [`docs/call-application-plan.md`](call-application-plan.md), one entry per
 slice.
 
-- [ ] **R2635 A `VariadicList` construction records an unbound origin**
-
-  Every homogeneous `*args` call builds a `VariadicList` whose register
-  type and call application both hold `_`, where upstream's list is over
-  its element references' origin.
-  - Cause: `build_variadic_list` (`mir/variadics.rs`) writes
-    `Origin::Unbound` in both. The elaborator calls the same builder
-    (`native/mono/substitute.rs`).
-  - Lever: the origin is the element references' (`Untracked { mutable:
-    owned }`, `element_lit_ref_type`), which makes
-    `_EltPointerType._mlir_lit_ref` the array element type the call
-    passes. Change the register type and the application together.
-  - Risk: if the argument check or the loan check rejects the list
-    against the callee's collector type, record that in
-    `docs/call-application-plan.md`. Do not keep `_` in the application.
-  - Probe: `print("hi")`, and 16 stdlib functions.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R2636 A `comptime` alias's bracket hole records `_` in the call's
   application**
 
@@ -148,7 +129,7 @@ slice.
   - Docs: `verify_application` in `docs/architecture.md`, the
     `ct_deferred` meanings in `docs/mir-text-format.md`, and B1e.
   - Slice B1e of `docs/call-application-plan.md`.
-  - Depends on R2633, R2634, R2635, R2636, R2637, R2638, R2517 (a
+  - Depends on R2633, R2634, R2636, R2637, R2638, R2517 (a
     synthesized move's register type keeps its member's own deferred
     `mut=`), and R2376 (`freeze(other: S)` declares no binder to name its
     argument's origin).

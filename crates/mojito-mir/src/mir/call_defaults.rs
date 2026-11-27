@@ -29,6 +29,7 @@ use crate::mir::call_addresses::requirement_by_address_parameter;
 use crate::mir::type_construction::storage_construction;
 use crate::mir::variadics::{
     FrameTables, ListElement, build_variadic_list, build_variadic_pack, element_lit_ref_type,
+    element_origin,
 };
 use crate::mir::verify::instruction_result_regs;
 use crate::mir::{
@@ -1120,7 +1121,7 @@ fn build_collector(
             &element_types,
             mutable,
             false,
-            mojito_types::origin::Origin::Unbound,
+            element_origin(mutable),
         );
         // A value read shallowly (a reference result's referent) belongs to
         // its owner, which the slot the pack binds it to must not destroy,

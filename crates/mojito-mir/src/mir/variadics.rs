@@ -74,17 +74,27 @@ pub struct VariadicListConstruction {
 /// A list gathers it in its `!pop.array`, a pack in its
 /// `lit.ref.pack.create`: upstream's
 /// `Pointer[element_type, origin]._mlir_lit_ref`, its origin untracked,
-/// mutable for an owned list.
+/// mutable for an owned list. That origin is the list's or pack's own
+/// `origin`, so the list's `_EltPointerType._mlir_lit_ref` is the array's
+/// element type, as upstream's constructor argument check fixes it.
 pub fn element_lit_ref_type(element: &Ty, owned: bool) -> Ty {
     Ty::lit_ref(RefTy {
         referent: element.clone(),
-        origin: Origin::Untracked { mutable: owned },
+        origin: element_origin(owned),
         mutability: Mutability::of(owned),
         address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
     })
 }
 
-/// The `VariadicList[element, owned]` over `elements`, in order.
+/// The origin of a list's or pack's element references, and so of the
+/// collector over them: untracked, mutable for an owned list or a `mut`
+/// pack.
+pub const fn element_origin(mutable: bool) -> Origin {
+    Origin::Untracked { mutable }
+}
+
+/// The `VariadicList[element, owned]` over `elements`, in order, its
+/// `origin` the element references' ([`element_origin`]).
 ///
 /// It is built as the call builds it ([`VariadicListConstruction`]): the
 /// element references' `!pop.array<size, …>`, empty for an empty call, in
@@ -101,6 +111,7 @@ pub fn build_variadic_list(
     elements: Vec<ListElement>,
 ) -> VariadicListConstruction {
     let reference_ty = element_lit_ref_type(element, owned);
+    let origin = element_origin(owned);
     let mut before = Vec::new();
     let mut after = Vec::new();
     let mut references = Vec::with_capacity(elements.len());
@@ -164,7 +175,7 @@ pub fn build_variadic_list(
         element.clone(),
         owned,
         owned,
-        mojito_types::origin::Origin::Unbound,
+        origin.clone(),
     ));
     before.push(MirInstr::Call {
         conventions: crate::mir::MirArgConventions::default(),
@@ -177,17 +188,18 @@ pub fn build_variadic_list(
         param_arg_regs: Vec::new(),
         receiver: None,
         // The constructor's whole declared list: the list's
-        // `elt_is_mutable`, `origin`, `element_type`, and `is_owned`, then
-        // its own `size` and the array's `container_origin`.
+        // `elt_is_mutable`, `origin` (the element references'), `element_type`,
+        // and `is_owned`, then its own `size` and the array's
+        // `container_origin`.
         instantiated_args: vec![
             TyArg::Val(CtValue::Bool(owned)),
-            TyArg::Origin(mojito_types::origin::Origin::Unbound),
+            TyArg::Origin(origin),
             TyArg::Ty(element.clone()),
             TyArg::Val(CtValue::Bool(owned)),
             TyArg::Val(CtValue::Index(
                 i64::try_from(length).expect("a call's argument count fits an Int"),
             )),
-            TyArg::Origin(mojito_types::origin::Origin::Untracked { mutable: false }),
+            TyArg::Origin(Origin::Untracked { mutable: false }),
         ],
         spread: None,
     });
@@ -214,7 +226,9 @@ pub fn build_variadic_list(
 ///
 /// The construction ([`VariadicListConstruction`]) is a reference to each
 /// element, the `!lit.ref.pack` over them (`lit.ref.pack.create`), mutable
-/// for a `mut` collector, and the pack over that.
+/// for a `mut` collector, and the pack over that. The `!lit.ref.pack`'s
+/// origin is [`element_origin`], which `pack_ty` is over too, as upstream's
+/// `VariadicPack.__init__` is over its reference pack's.
 ///
 /// What the elements refer to lives through the call: each of the `kept`
 /// places (where a borrowed element lies, or the owner a value element was
@@ -265,7 +279,7 @@ pub fn build_variadic_pack(
     let refs = tables.fresh_register(
         TyKind::LitRefPack {
             elements: element_types.to_vec(),
-            origin: Origin::Untracked { mutable },
+            origin: element_origin(mutable),
             mutability: Mutability::of(mutable),
         }
         .into(),

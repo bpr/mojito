@@ -2932,6 +2932,12 @@ caller's `__passed_varargs__` slot, as upstream's call stores its
 `pop.array.create`, and a `call` of `VariadicList`'s `@implicit`
 constructor (`variadic_list_constructor_symbol`) on the slot's `!lit.ref`,
 which `inline-always` splices as it splices any `@inline(.always)` callee.
+The list is over its element references' untracked origin
+(`mir::variadics::element_origin`, mutable for an owned list), which its
+register type and the constructor's `origin` argument both name, as
+upstream's constructor argument check fixes `Self.origin` to the array's
+`_EltPointerType._mlir_lit_ref` elements'; a heterogeneous call's
+`VariadicPack` is over its `!lit.ref.pack`'s origin the same way.
 The array holds the elements' `!lit.ref`s, and an empty call's is the
 zero-size `!pop.array<0, …>`, which the constructor's `array.gep` addresses
 without reading. A `read` collector's element is the caller's own place, its
