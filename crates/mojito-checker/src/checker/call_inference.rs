@@ -2437,9 +2437,30 @@ impl Checker {
         let open: Vec<_> = super::origins::declared_origin_binders(decls)
             .filter(|id| !bracket.1.origins().iter().any(|bound| bound.id == *id))
             .collect();
-        let places: Vec<(usize, &Ty)> = patterns
+        // A compile-time argument lends the origin binders its parameter's
+        // type names, after the run-time arguments.
+        let compile_time = if open.is_empty() {
+            Vec::new()
+        } else {
+            self.bracket_origin_places(name, decls, bracket.0)
+        };
+        let lent_names: Vec<String> = names
             .iter()
-            .zip(actuals)
+            .cloned()
+            .chain(compile_time.iter().map(|(name, _, _)| name.clone()))
+            .collect();
+        let lent: Vec<Ty> = patterns
+            .iter()
+            .cloned()
+            .chain(compile_time.iter().map(|(_, declared, _)| declared.clone()))
+            .collect();
+        let places: Vec<(usize, &Ty)> = lent
+            .iter()
+            .zip(
+                actuals
+                    .iter()
+                    .chain(compile_time.iter().map(|(_, _, actual)| actual)),
+            )
             .enumerate()
             .filter(|(_, (pattern, _))| super::origins::names_origin_binder(pattern))
             .map(|(index, (_, actual))| (index, actual))
@@ -2449,8 +2470,8 @@ impl Checker {
         } else {
             Some(Self::bind_callee_origins(
                 name,
-                names,
-                patterns,
+                &lent_names,
+                &lent,
                 &places,
                 super::origins::CalleeBinders::Declared(open),
             )?)
@@ -2461,7 +2482,7 @@ impl Checker {
                 name,
                 decls,
                 bracket.1,
-                (names, patterns),
+                (&lent_names, &lent),
                 (&places, origins),
             )?;
         }
@@ -2470,7 +2491,7 @@ impl Checker {
         // its argument's to bind, through the argument's conversion when
         // its place does not (a `List` passed as `Span[Int, o]`).
         let named = |id: mojito_types::origin::OriginParamId| {
-            patterns.iter().any(|pattern| {
+            lent.iter().any(|pattern| {
                 super::origins::names_origin_binder_in(pattern, &|named| named == id)
             })
         };
@@ -2479,8 +2500,30 @@ impl Checker {
             || patterns.to_vec(),
             |origins| origins.substitute_all(patterns),
         );
+        // A compile-time argument is checked against its parameter's type
+        // with the origins the call bound, as a run-time one is.
+        let typed: Option<Vec<ParamDecl>> = origins
+            .as_ref()
+            .filter(|_| !compile_time.is_empty())
+            .map(|origins| {
+                decls
+                    .iter()
+                    .map(|decl| match decl {
+                        ParamDecl::Value { ty, .. } if super::origins::names_origin_binder(ty) => {
+                            decl.with_value_type(origins.substitute(ty))
+                        }
+                        _ => decl.clone(),
+                    })
+                    .collect()
+            });
         let mut bound = self
-            .resolve_explicit_use_params(name, decls, bracket, &substituted, actuals)
+            .resolve_explicit_use_params(
+                name,
+                typed.as_deref().unwrap_or(decls),
+                bracket,
+                &substituted,
+                actuals,
+            )
             .map_err(|failure| self.collector_element_failure(name, decls, failure))?;
         bind_unbound_origin_attributes(&mut bound.attributes, (decls, bracket.0), origins.as_ref());
         Ok(SolvedCall { bound, origins })
@@ -3097,12 +3140,30 @@ impl Checker {
                 .collect(),
         )
         .into();
+        self.converted_instance(&target, actual, argument)
+    }
+
+    /// The instance the implicit conversion of `argument`, of type
+    /// `actual`, to `target`, a struct type whose origin slots may be open,
+    /// builds: the origin its `ref [Self.origin]` initializer borrows from
+    /// the argument, or the one a refined `out self` (`out self:
+    /// StaticString`) names, as upstream's converted value's type. The
+    /// reference the argument lends is read without keeping its facts, so
+    /// a candidate a call does not select materializes nothing. `None`
+    /// when no conversion applies or it leaves an origin open.
+    pub(super) fn converted_instance(
+        &self,
+        target: &Ty,
+        actual: &Ty,
+        argument: &Expr,
+    ) -> Option<Ty> {
+        use mojito_types::origin::Origin;
+        let (name, _) = target.kind().as_non_pointer_struct()?;
+        let params = &self.structs.get(name)?.params;
         let selected = self
-            .implicit_conversion_constructor(actual, &target)
+            .implicit_conversion_constructor(actual, target)
             .ok()??;
         let Some(id) = selected.borrowed_origin else {
-            // A refined `out self` (`out self: StaticString`) names the
-            // origin itself.
             return Some(selected.constructed).filter(|constructed| {
                 mojito_types::types::nominal_parts(constructed).is_some_and(|(_, arguments)| {
                     !arguments
@@ -3111,7 +3172,7 @@ impl Checker {
                 })
             });
         };
-        let (origin, lent) = self.reference_argument(argument)?;
+        let (origin, lent) = self.probe(|| self.reference_argument(argument))?;
         Some(super::instance_with_origin(
             params,
             &selected.constructed,

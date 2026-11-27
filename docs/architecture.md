@@ -1253,7 +1253,11 @@ h(n)`) is an application too, of a function the check names for the
 expression (`Checker::lifted_application`, from `eval_associated_ct` and
 `compile_dependent_ct_expr` inside a `lifting_position`, recorded as
 `SemanticAdjustment::ComptimeApplication`): the function is applied to the
-binders the expression reads (`binders_read`), two occurrences of one
+binders the expression reads (`binders_read`), or to every binder in scope
+but an origin when those are not known (`binders_in_scope`), an origin's
+`mut=` binder being an ordinary `Bool` binder of a function that declares
+no origin, which MIR's scope of a declaration's binders
+(`ParamDecl::instance_binders`) declares too; two occurrences of one
 expression over the same bindings share it, as the pin identifies them by
 structure, and arithmetic over applications stays arithmetic. MIR lifts each
 such function once the body that spells its expression is lowered
@@ -1282,7 +1286,11 @@ origins `BoundParameters::origins` returns are substituted into the call's
 or value's signature through `bind_bracket_origins`, a `_` leaving its
 origin binder to the call's one solve, `resolve_call_params`, which binds
 the declared list's open origin binders from the places its arguments lend
-(`bind_callee_origins` over `CalleeBinders::Declared`) beside its type and
+(`bind_callee_origins` over `CalleeBinders::Declared`), a compile-time
+argument lending its type inferred in its compile-time position
+(`Checker::bracket_origin_places`, `Checker::compile_time_argument_ty`,
+which also checks the argument against its parameter's type with those
+origins bound), beside its type and
 value binders and records each such `_`'s attribute as the origin it bound,
 and rejects an origin binder (or the `mut=` binder governing one) that
 neither its bracket nor its arguments bind and no parameter names, as
@@ -3643,14 +3651,17 @@ slot, as upstream's `Q[True, o]` and `Q[False, o]` are distinct types: the
 elaborator keys it on every binder but the origins
 (`ParamDecl::instance_binders`, `StructDeclaration::instance_view`),
 `substitute_ty` closes the slot (`StructCatalog::closed_mutability`) to the
-`Bool` its origin decides or a member's receiver bound, and erases one no
-binding decides, or one naming a binder the generator removed, to
-`_REMOVED_ARG` (`CtValue::RemovedArg`), as upstream's generator spells a
-parameter it does not bind. A closed instance then meets the erased one at
-a call edge whose parameter declares no binder for the slot (`Span[T, _]`,
-R2376): `unify_arg` agrees `_REMOVED_ARG` with any value, the verifier's
-`erased_struct_agrees` admits the edge, and the VM thaws a frozen value of
-the closed instance as the erased one its parameter declares. The MIR
+`Bool` its origin decides or a binder the instance binds (a member's
+receiver, or a declaration's own `mut=` binder beside an origin the
+instance erased), and erases one no binding decides, or one naming a
+binder the generator removed, to `_REMOVED_ARG` (`CtValue::RemovedArg`),
+as upstream's generator spells a parameter it does not bind. A parameter
+typed by a struct with an unbound origin (`Span[T, _]`) declares that
+origin's binder pair, so its instance keys the slot. A closed instance
+still meets an erased one where a generator removed the binder: `unify_arg`
+agrees `_REMOVED_ARG` with any value, the verifier's `erased_struct_agrees`
+admits the edge, and the VM thaws a frozen value of the closed instance as
+the erased one its parameter declares. The MIR
 verifier rejects an instance of a struct declaring an origin binder that holds
 other than one argument per declared parameter, each origin and each `mut=`
 value at its binder's position (`verify/scope.rs`,

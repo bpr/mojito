@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2662**.
+Next free ID: **R2666**.
 
 ## Ordered Work
 
@@ -2566,33 +2566,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     copied pointer.
   - Probe: `conformance/probes/pointer_copied_into_struct_keeps_loan.mojo`.
   - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1156 An argument bound to an unbound-origin parameter carries no
-  origin into argument exclusivity**
-
-  Problem: `f(Span(xs), Span(xs))` over `def f(a: Span[Int, _], b:
-  Span[Int, _])` and a `var xs` runs, where the pin rejects it with
-  "aliasing values passed mutably to 'a' argument and passed mutably to
-  'b' argument in 'f' call".
-  - The same call is judged when the parameters spell a bound origin
-    (`rhs: Box[Self.o]`).
-  - `check_argument_origin_exclusivity` records carried places from the
-    declared and bound parameter types, and an unbound `_` slot carries
-    none; the argument's own type carries the origin.
-  - Cause: `auto_parameterize` (`Declared::bind`) declares upstream's
-    per-call origin binder for `Pointer`'s unbound origin and a parametric
-    alias applying `Pointer` (`MutPointer`, `ImmPointer`) only (R2419's
-    gate on `POINTER_TYPE_NAME`); every other struct's origin slot reaches
-    the checker as `_`. R2376 removes the gate, and the session landing
-    it confirms these probes and deletes this entry.
-  - Probe: `conformance/probes/unbound_origin_arguments_alias.mojo`.
-  - Probe: `conformance/probes/list_slices_compared_alias.mojo`,
-    `xs[0:2] != xs[1:3]` through `Span.__ne__(self, rhs: Span[Self.T, _])`.
-  - Probe: `b.any(Span(xs))` over a method `any(self, rhs: Span[Int, _])`
-    of a struct holding `Span(xs)`.
-  - Found while landing R190 (2026-10-19).
-  - Depends on R2376.
   - Model: Opus, Not Planned.
 
 - [ ] **R2332 A read receiver aliasing a `mut` argument of the same call
@@ -8058,6 +8031,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
+- [ ] **R2665 A compile-time argument demanded directly and through a
+  forwarding parameter keys two instances under one symbol**
+
+  `print(last[Span(xs)](1.0), forwarded[Span(xs)](1.0))` over `def
+  last[c: Span[Float64, _]](x: Float64)` and a `forwarded[c: Span[Float64,
+  _]]` calling `last[c](x)`, with `comptime xs: List[Float64]`, stops at
+  elaboration ("concrete instance symbol `last$mono$…` collides with an
+  existing declaration"), where the pin prints `4.0 4.0`.
+  - `Specializer::enqueue` (`native/mono/specializer.rs`) names both
+    demands of `last` by one instance symbol, but their keys differ, so the
+    second is neither the first instance nor a fresh one.
+  - Either call alone runs, and so do the two over different lists
+    (`assets/ok/compile_time_parameter_origin_binders.mojo`).
+  - Lever: key the instance by the argument's value as its symbol spells
+    it, so the forwarded value and the direct one are one instance.
+  - Found while landing R2376 (2026-11-27).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 
 Track: `divergences`.
@@ -8311,6 +8303,12 @@ retained on purpose and re-probed rather than fixed; they are listed in
     the pin rejects both ("it depends on an unresolved parameter
     'origin_of(o)'"): its `StringSpan[o]` spells `ImmOrigin(o)`, which no
     argument solves.
+  - A bare `StringSpan` parameter declares a `mut`/origin binder pair,
+    where the pin's declares one `ImmOrigin` binder.
+  - Probe: on landing, the bundled `print` takes back upstream's
+    `values._write_to(buffer, sep=sep, end=end)` (`std/io/io.mojo`),
+    which fails today ("no overload matches"): `sep`'s `mut` binder does
+    not convert to `_write_to`'s `StringSpan[O3]`.
   - Found while repairing the 2026-11-04 overnight gate.
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -10372,8 +10370,8 @@ retained on purpose and re-probed rather than fixed; they are listed in
   rejects it ("aliasing values passed mutably to 'p' argument and passed
   mutably to 'q' argument").
   - Cause: `auto_parameterize` (`Declared::bind`) declares an origin binder
-    for a direct `Pointer` spelling only; an alias's hole reaches the
-    checker as `_`, which `bind_alias_origin_placeholders`
+    for a struct or a parametric alias, but a partial alias's hole reaches
+    the checker as `_`, which `bind_alias_origin_placeholders`
     (`checker/type_resolution.rs`) reads as `Origin::UnsafeAny` at
     the alias parameter's mutability.
   - `InstalledInterfaces::alias_application` respells the alias's binders
@@ -10491,6 +10489,11 @@ retained on purpose and re-probed rather than fixed; they are listed in
     (self)` hook is spelled `S.__getattr_param__["k"]()` and reports
     "'S' value has no attribute '__getattr_param__'", where the pin
     reports the missing `self` argument.
+  - Probe: `Self.__eq__(self, rhs=rhs_same)` in a method of `W` reports
+    "'W' value has no attribute '__eq__'", where the pin calls the
+    keyword-selected overload. The bundled `StringSpan.__eq__(self,
+    rhs_same: Self)` and `__ne__` spell it `self.__eq__(rhs=rhs_same)`
+    (`stdlib/std/string.mojo`); on landing, take back upstream's spelling.
   - Found while landing R2408 (2026-11-21).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -10533,7 +10536,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   binder by `TypeParam::is_erased_origin_param` (`bounds == ["Origin"]`),
   where upstream's `addImplicitTypeParams` runs on the resolved type.
   - It skips a bare `Origin` binder and passes `_` for a struct's
-    `Origin`-spelled slot (every struct's but `Pointer`'s, R1156), while an alias-typed one (`[o: O]` over
+    `Origin`-spelled slot only where a partial alias leaves it a hole
+    (R2441), while an alias-typed one (`[o: O]` over
     `comptime O = Origin`) gains upstream's implicit `mut` and
     `_mlir_origin` binders, so the two spellings differ before the check.
   - Once it goes, the parser drops its `Origin[mut=…]` special case
@@ -11314,9 +11318,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     and index type.
   - The strided, gather, and scatter forms follow the same receivers; split
     them into their own entry if the session runs long.
-  - Check first that a receiver spelled through the `MutPointer` alias
-    gets its origin binder: `auto_parameterize` binds a hole only on a
-    bare `Pointer` (R1156's gate).
+  - A receiver spelled through the `MutPointer` alias gets its origin
+    binder from `auto_parameterize`, as a bare `Pointer` does.
   - Probe: `p.swap_pointees(q)` over two `Pointer(to=…)` values reports "no
     method 'swap_pointees'" and runs at the pin.
   - Found while landing R2468 (2026-11-22).
@@ -11887,82 +11890,64 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R2376 A parameter typed by a struct with an unbound origin
-  declares no implicit binder for that origin's `mut=`, where upstream's
-  `addImplicitTypeParams` adds one**
+- [ ] **R2662 A compile-time parameter's type spelling its struct's
+  `mut=` slot reads the struct's own `mut`, where upstream reads the
+  binder it names**
 
-  `def f(s: Span[Int, _])` takes one instance whose `mut=` is deferred,
-  where the pin's `f` is generic over the span's mutability and its
-  origin and specializes per call.
-  - `auto_parameterize`'s `Declared::bind` (`mojito-comptime`) declares
-    upstream's per-call `$mut_<arg>`/`$origin_<arg>` pair for `Pointer` and
-    a parametric alias applying it only (`binds_origin`). Every other
-    struct's unbound origin slot reaches the checker as `_`.
-  - Lever: drop the `POINTER_TYPE_NAME` clause, so `binds_origin` is
-    `alias.is_none()`. `mutability_sibling` already skips a `mut=` sibling
-    bound elsewhere, and `is_pointer_alias` stays for a parametric alias
-    until R2441.
-  - The same gate is R1156's cause: the binders also carry the argument's
-    origin into argument exclusivity. Confirm R1156's `Span` probes and
-    delete it with this entry. Its pointer-alias probe is R2441's.
-  - With the gate removed, the bundled library now packages past every
-    literal passed to a bare `StringSpan` parameter, past the `Hasher`
-    requirement (`AHasher._update_with_bytes`), and past `print`'s `sep:
-    StringSlice = " "` default. A conversion's `mut=` now solves (R2656),
-    so the user `V` probe of `h(xs)` over `def h(v: V[Int, _])` should
-    print `True` once the gate is gone. The site list past
-    `_horner_evaluate` is unverified (the `Writer.write_string`
-    requirement among it): if a packaging failure appears that is none of
-    these, file it and keep the gate.
-  - Probe: with the gate removed, packaging stops at the compile-time
-    parameter `coefficients: Span[Scalar[dtype], _]` of
-    `_horner_evaluate` (`std/math/polynomial.mojo`), with "failed to infer
-    parameter 'mut'" at its call `_horner_evaluate[coefficients](x)`.
-  - Probe: once it lands, the bundled `print` takes back upstream's
-    `values._write_to(buffer, sep=sep, end=end)` (`std/io/io.mojo`).
-  - Probe: `g(c, v)` over `def g[X: R](x: X, v: V[Int, _]) -> Int: return
-    x.r(v)`, with `R` requiring `def r[m: Bool, //, o: Origin[mut=m]](self,
-    v: V[Int, o]) -> Int`, fails ("no overload matches"), where the pin
-    prints `4`. A free `r` over the same binders, called from `def g(v:
-    V[Int, _])`, fails the same way ("expected V[mut, Int], found V[mut,
-    Int]"): the `_` origin has no `mut=` binder to hand on.
-  - Check packaging with a fresh `MOJITO_CACHE_DIR`. A cached package
-    masks the failure.
-  - Probe: `reflect[type_of(s)].name()` in `def f(s: Span[Int, _])`,
-    called with `Span(xs)` and with an `ImmOrigin` span, prints
-    `std.span.Span[mut, SIMD[DType.int, 1], {}]` twice, where the pin
-    prints `True` then `False` in that slot.
-  - Probe: `hs(bs)`, `hs(Span(bs))`, and an `ImmOrigin` span over `def
-    hs(s: Span[Byte, _])` printing `s.mut, s.origin.mut` fail ("'mut' is
-    not a compile-time constant here"), where the pin prints `True True`
-    twice, then `False False`.
-  - Probe: `t = freeze(s)` over `def freeze(other: S) -> S[other.T,
-    ImmOrigin(other.origin)]` (`S[mut: Bool, //, T: AnyType, origin:
-    Origin[mut=mut]]`) gets an unbound origin and an undecided `mut=`, so
-    `t.mut` fails with "'mut' is not a compile-time constant here", where
-    the pin prints `False`.
-  - Probe: that `freeze`'s construction records `[mut, $T_other, _,
-    $k_other]` for `S.__init__` (`assets/ok/struct_parameter_reads_through_value.mojo`),
-    two placeholders R2639's rule rejects.
-  - Probe: `def g(other: S) -> Bool: return other.mut` over the same `S`
-    fails the same way, where the pin prints `True` for `g(S[Int,
-    origin_of(x)]())`. For a bare `S` the general arm already declares
-    `$mut_other`, but nothing ties it to an origin.
-  - Today a closed `Span[True, …]` passed to such a parameter reaches the
-    callee's one `_REMOVED_ARG` instance (`unify_arg`,
-    `erased_struct_agrees`, the VM's `thaw`). Keep those rules, which have
-    other sources, and confirm under `emit-mir` that no `Span[_REMOVED_ARG,
-    …]` parameter instance remains for the probe.
-  - A bare `StringSpan` parameter gains a `mut`/origin pair where the
-    pin's gains one `ImmOrigin` binder. That gap is R1916's.
-  - Plan: `R2376-a-parameter-typed-by-a-struct-plan.md` (repo root,
-    untracked), Slice 4, with the prototype's results and the fixture and
-    doc list.
-  - Found while landing R2372 (2026-11-19).
-  - Landing it unblocks R2396, which retires the pre-check origin
-    spelling.
-  - Depends on R2656, R2657, R2658, R2397, R1926.
-  - Model: Fable, Planned.
+  `c.mut` in `def outer[m: Bool, o: Origin[mut=m], //, c: Span[mut=m,
+  Int, o]]` fails ("'mut' is not a compile-time constant here"), where
+  the pin prints `False` for `outer[Span(xs)]` over a compile-time list.
+  - The same spelling on a run-time parameter (`s: Span[mut=m, Int,
+    o]`) reads `m`. The compile-time parameter's declared type keeps the
+    slot as `Span`'s own deferred `mut`.
+  - Auto-parameterization spells a bare struct's unbound `mut` this way
+    (`S[$T_c, $origin_c, mut=$mut_c]`), so `def f[c: S]()` called as
+    `f[S[Int, ImmStaticOrigin]()]()` fails ("failed to infer parameter
+    'mut'"), where the pin prints the field it reads.
+  - Probe: `inner[c](x)` inside that `outer`, over `inner` declared
+    alike, stops at elaboration ("cannot resolve parameter `m`"); the pin
+    prints the sum.
+  - Found while landing R2376 (2026-11-27).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2663 A compile-time argument solves no origin binder through
+  its conversion to the parameter's type**
+
+  `g["abc"]()` over `def g[c: StringSpan]() -> Int` is rejected ("type
+  mismatch for value parameter 'c'"), where the pin prints `3`.
+  - `Checker::bracket_origin_places` (`checker/declarations.rs`) lends
+    the argument's own type to the call's origin solve, so a literal or
+    a `List` converting to a view binds nothing. A run-time argument
+    solves through its conversion (`view_conversion_actual`,
+    `checker/call_inference.rs`, R2656 and R2657).
+  - Lever: lend the converting argument's constructed instance, as
+    `reference_solve_pair` does for a run-time one.
+  - Probe: `f[[Float64(1.0), 2.0]]()` over `def f[c: Span[Float64,
+    _]]()` prints `2` at the pin. R52 owns the same shape's type binder.
+  - Found while landing R2376 (2026-11-27).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2664 A compile-time expression that reads an origin's `mut=`
+  binder lifts a function over no binder for it**
+
+  `comptime for i in range(Int(m) + 1)` in `def show2[m: Bool, o:
+  Origin[mut=m], //](s: Span[Int, o])` fails ("parameter constant names
+  parameter `m` of `show2` that no enclosing declaration binds"), where
+  the pin prints `0 1` for a mutable span.
+  - A lifted function is applied to its declaration's argument binders
+    (`binders_in_scope`, `checker/comptime_validation.rs`), as a call
+    is, and an origin's `mut=` binder is no argument binder
+    (`ParamDecl::is_argument_binder`), so MIR declares none for it.
+  - Lever: apply the lifted function to the `mut=` binders it reads as
+    ordinary `Bool` binders of its own list, and have the inliner and the
+    elaborator bind them from the caller's instance.
+  - Probe: `range(values.__len__() + Int(m))` over a pack beside that
+    pair fails alike; the pin prints `0 1 2 3` for three values.
+  - Found while landing R2376 (2026-11-27).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R2659 A spelled origin argument counts as supplied to a
   construction whatever it resolved to**
@@ -13236,8 +13221,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     if hook:`) until `comptime if case` lands.
   - Probe: upstream's `values._write_to(buffer, sep=sep, end=end)` is
     respelled as a `comptime for` over the pack, since a bare
-    `StringSlice` `sep` declares no origin binder to solve `_write_to`'s
-    `O3` from (R2376).
+    `StringSlice` `sep` takes a `mut` binder beside its origin, which
+    `_write_to`'s `O3: ImmOrigin` does not take (R1916).
   - Found while landing R1287 (2026-11-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.

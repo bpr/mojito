@@ -679,6 +679,9 @@ pub struct Checker {
     module_def_results: declaration_table::DeclarationTable<Expr>,
     /// The expressions lifted so far, each with the application it denotes.
     lifted_applications: RefCell<Vec<comptime_validation::LiftedApplication>>,
+    /// The hidden slot each temporary materialized as, by its source span,
+    /// kept across probes ([`Self::temporary_owner`]).
+    temporary_owners: RefCell<HashMap<SourceSpan, mojito_types::origin::OwnerId>>,
     /// The lowered name of the declaration whose body is being checked,
     /// which owns every function the check lifts from it; `None` at module
     /// scope (`__toplevel__`).
@@ -1185,6 +1188,7 @@ impl Checker {
             builtin_struct_fields: HashMap::new(),
             module_def_results: declaration_table::DeclarationTable::default(),
             lifted_applications: RefCell::new(Vec::new()),
+            temporary_owners: RefCell::new(HashMap::new()),
             lifting_owner: None,
             lifted_counts: RefCell::new(HashMap::new()),
             declaration_symbols: RefCell::new(HashMap::new()),

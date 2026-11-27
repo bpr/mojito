@@ -150,6 +150,7 @@ struct Span[mut: Bool, //, T: AnyType, origin: Origin[mut=mut]](
             i += 1
         return True
 
+    @__unsafe_nested_origins_read_only
     @inline(.always)
     def __ne__(self, rhs: Span[Self.T, _]) -> Bool where conforms_to(
         Self.T, Equatable

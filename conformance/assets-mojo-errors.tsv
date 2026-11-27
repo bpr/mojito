@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1371
+# swept-count	1372
 assets/type_error/address_space_unknown_leading_dot.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/address_space_unknown_name.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/atomic_bool_has_no_load.mojo	compile-reject	agree	error: no matching method in call to 'load'
@@ -1341,6 +1341,7 @@ assets/type_error/unavailable_function_called.mojo	compile-reject	agree	error: u
 assets/type_error/unavailable_function_replacement.mojo	compile-reject	agree	error: 'f' is unavailable, use 'g' instead
 assets/type_error/unavailable_function_value.mojo	compile-reject	agree	error: gone
 assets/type_error/unavailable_initializer.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/unbound_origin_arguments_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'a' argument and passed mutably to 'b' argument in 'f' call
 assets/type_error/unbound_struct_member_dependent.mojo	compile-reject	agree	error: cannot access comptime member 'Y' with unbound parameter 'D.T'
 assets/type_error/unbound_struct_member_through_sibling.mojo	compile-reject	agree	error: cannot access comptime member 'b' with unbound parameter 'S.T'
 assets/type_error/uninit_storage_compiler_private.mojo	compile-reject	agree	error: use of unknown declaration '__UninitStorage'

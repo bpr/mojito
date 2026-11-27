@@ -27,7 +27,10 @@ use super::*;
 /// SIMD[dt, 1]`, `x: Lane`) leaves each one unbound, as a bare struct does.
 /// A module alias of an unapplied struct (`comptime StringSlice =
 /// StringSpan`) is that struct's generator, so its application is the
-/// struct's.
+/// struct's. An unbound origin (`Span[Int, _]`, a bare `StringSpan`) takes
+/// a binder of its own, after one for the `mut=` binder its type names
+/// when the application leaves that unbound too, as upstream's `[mut_p:
+/// Bool, origin_p: Origin[mut=mut_p], //]`.
 /// The struct is the program's own or the `installed` package's, whose
 /// declared parameters give each binder its type, with the struct's earlier
 /// parameters read as their arguments. The binders follow the declaration's own infer-only
@@ -50,9 +53,6 @@ struct Declared<'a> {
     /// Each module alias with compile-time parameters, with its parameters
     /// as declared.
     parametric_aliases: HashMap<String, Vec<TypeParam>>,
-    /// Each module alias with compile-time parameters whose body applies
-    /// `Pointer` (`comptime MutPointer[…] = Pointer[T, origin, …]`).
-    pointer_aliases: HashSet<String>,
     /// Every other name the program declares, which hides a package struct.
     others: HashSet<String>,
     /// Each module alias whose body applies a struct with a hole, as the
@@ -69,7 +69,6 @@ impl<'a> Declared<'a> {
         let mut declared = Self {
             structs: HashMap::new(),
             parametric_aliases: HashMap::new(),
-            pointer_aliases: HashSet::new(),
             others: HashSet::new(),
             partial_aliases: HashMap::new(),
             generator_aliases: HashMap::new(),
@@ -107,11 +106,6 @@ impl<'a> Declared<'a> {
                         declared
                             .parametric_aliases
                             .insert(name.clone(), type_params.clone());
-                        if value.bracket_application().is_some_and(|(applied, _)| {
-                            applied == mojito_types::types::POINTER_TYPE_NAME
-                        }) {
-                            declared.pointer_aliases.insert(name.clone());
-                        }
                     }
                     declared.others.insert(name.clone());
                 }
@@ -142,25 +136,6 @@ impl<'a> Declared<'a> {
         installed
             .struct_parameters(name)
             .or_else(|| installed.parametric_alias_parameters(name))
-    }
-
-    /// Whether `name` is a module alias with compile-time parameters whose
-    /// body applies `Pointer`: the program's own, or, unless another
-    /// declaration of the program hides it, the `installed` package's
-    /// (`MutPointer`).
-    fn is_pointer_alias(&self, name: &str) -> bool {
-        if self.pointer_aliases.contains(name) {
-            return true;
-        }
-        if self.structs.contains_key(name) || self.others.contains(name) {
-            return false;
-        }
-        self.installed.is_some_and(|installed| {
-            installed.parametric_alias_parameters(name).is_some()
-                && installed
-                    .alias_application(name)
-                    .is_some_and(|(applied, _)| applied == mojito_types::types::POINTER_TYPE_NAME)
-        })
     }
 
     /// The struct whose generator the alias `name` names: the program's own
@@ -333,14 +308,10 @@ impl<'a> Declared<'a> {
             return None;
         }
         let slots = Slots::of(declared, args)?;
-        // `Pointer` is the one struct whose `_` origin the checker would
-        // otherwise read as a distinct unsafe-any provenance rather than an
-        // unbound slot, so its origin binds per call as upstream's does,
-        // and so does that of a parametric alias applying it
-        // (`MutPointer[T, _]`). Every other struct's origin, and a partial
-        // pointer alias's, still reaches the checker as `_` (R1156).
-        let binds_origin = alias.is_none()
-            && (name == mojito_types::types::POINTER_TYPE_NAME || self.is_pointer_alias(name));
+        // Every struct's unbound origin binds per call, as upstream's does,
+        // and so does that of a parametric alias (`MutPointer[T, _]`). A
+        // partial alias's hole still reaches the checker as `_` (R2441).
+        let binds_origin = alias.is_none();
         let declared_binders = binders.len();
         let mut arguments: HashMap<String, ParamArg> = HashMap::new();
         let mut positional = Vec::new();

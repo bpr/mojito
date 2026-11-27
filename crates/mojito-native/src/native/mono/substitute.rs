@@ -842,9 +842,10 @@ fn substitute_address_space(slot: &AddressSpaceSlot, bindings: &Bindings) -> Add
 /// `original`, an application of the struct `name`, with each origin's
 /// `mut=` argument closed for the instance it keys: a slot naming a binder
 /// the generator removed erases, one its origin decides is that origin's
-/// mutability, one over the instance's own origin binder (a member's
-/// `Self`) takes the binder's bound value, and one no binder decides (an
-/// unbound origin's) erases ([`StructCatalog::closed_mutability`]).
+/// mutability, one over a binder the instance binds (a member's `Self`, or
+/// a declaration's own `mut=` binder beside an origin it erased) takes the
+/// bound value, and one no binder decides (an unbound origin's) erases
+/// ([`StructCatalog::closed_mutability`]).
 fn closed_mutability_arguments(name: &str, original: &[TyArg], bindings: &Bindings) -> Vec<TyArg> {
     bindings
         .structs
@@ -860,13 +861,10 @@ fn closed_mutability_arguments(name: &str, original: &[TyArg], bindings: &Bindin
             {
                 Some(CtValue::Bool(mutable))
             }
-            _ if origin
-                .is_none_or(|origin| matches!(origin, mojito_types::origin::Origin::Unbound)) =>
-            {
-                None
+            CtValue::Deferred(binder) if let Some(bound) = bindings.values.get(binder) => {
+                Some(bound.clone())
             }
-            CtValue::Deferred(binder) => bindings.values.get(binder).cloned(),
-            CtValue::Expr(expr) => closed_argument(expr, bindings).ok(),
+            CtValue::Expr(expr) if let Ok(bound) = closed_argument(expr, bindings) => Some(bound),
             _ => None,
         })
         .into_owned()

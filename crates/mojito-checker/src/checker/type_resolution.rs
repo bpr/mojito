@@ -3818,7 +3818,15 @@ impl Checker {
                         let lanes =
                             TyArg::Val(lanes.as_i64().map_or(CtValue::Expr(lanes), CtValue::Int));
                         return Ok(BoundArgument::attribute(lanes));
-                    } else if !self.coerces_by_origins(&actual, ty) {
+                    } else if !self.coerces_by_origins(&actual, ty)
+                        // The origins a call binds from a compile-time
+                        // argument are its checked type's
+                        // ([`Self::bracket_origin_places`]), which a folded
+                        // value's type need not spell.
+                        && !self
+                            .probe(|| self.compile_time_argument_ty(arg))
+                            .is_some_and(|checked| self.coerces_by_origins(&checked, ty))
+                    {
                         // A struct parameter converts its argument through
                         // the `@implicit` constructor a run-time argument's
                         // own type selects (a literal its `IntLiteral` one).

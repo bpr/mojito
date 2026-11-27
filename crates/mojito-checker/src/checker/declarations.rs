@@ -5149,6 +5149,60 @@ impl Checker {
         self.infer_use_params(name, &ParamDecl::argument_view(decls), patterns, actuals)
     }
 
+    /// Each compile-time value parameter of `decls` whose declared type
+    /// names an origin binder, with that type and the type of the argument
+    /// the bracket `param_args` binds it to: a place its argument lends the
+    /// binder, as upstream unifies a parameter's type with its argument's
+    /// (`_horner_evaluate[coefficients]` over `coefficients: Span[Scalar[
+    /// dtype], o]`). Empty when the bracket does not fit `decls`.
+    pub(super) fn bracket_origin_places(
+        &self,
+        name: &str,
+        decls: &[ParamDecl],
+        param_args: &[mojito_ast::ast::ParamArg],
+    ) -> Vec<(String, Ty, Ty)> {
+        if param_args.is_empty() {
+            return Vec::new();
+        }
+        let unbound = mojito_ast::call::bracket_unbound_slots(decls, param_args)
+            .ok()
+            .filter(mojito_ast::call::UnboundSlots::any_open);
+        let Ok(bound) = bracket_bindings(name, decls, param_args, unbound.as_ref()) else {
+            return Vec::new();
+        };
+        decls
+            .iter()
+            .zip(&bound)
+            .filter_map(|(decl, arguments)| {
+                let declared = decl.value_element_ty()?;
+                if !super::origins::names_origin_binder(declared) {
+                    return None;
+                }
+                let (_, argument) = arguments.first()?;
+                let actual = self.probe(|| self.compile_time_argument_ty(argument))?;
+                Some((decl.name().to_string(), declared.clone(), actual))
+            })
+            .collect()
+    }
+
+    /// The type a compile-time argument `argument` checks to, inferred in
+    /// the compile-time position a bracket is: what the call binds the
+    /// origin binders its parameter's type names from
+    /// ([`Self::bracket_origin_places`]), whatever origin the value it folds
+    /// to spells.
+    pub(super) fn compile_time_argument_ty(
+        &self,
+        argument: &mojito_ast::ast::ParamArg,
+    ) -> Option<Ty> {
+        match argument {
+            mojito_ast::ast::ParamArg::Value(expr) => {
+                let _position = self.comptime_position();
+                self.infer(expr).ok()
+            }
+            mojito_ast::ast::ParamArg::Named { value, .. } => self.compile_time_argument_ty(value),
+        }
+    }
+
     /// [`Self::resolve_explicit_use_params`] of an empty bracket: every
     /// binder of the argument view `decls` inferred from `patterns` against
     /// `actuals`.

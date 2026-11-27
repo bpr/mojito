@@ -1770,6 +1770,10 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
 
     # Equality is bytewise against another view or an owned String (upstream's
     # `__eq__` overloads); the operator selects by the right operand's type.
+    # The `Self` overload is `Equatable`'s witness.
+    def __eq__(self, rhs_same: Self) -> Bool:
+        return self.__eq__(rhs=rhs_same)
+
     def __eq__(self, rhs: StringSpan) -> Bool:
         if self._size != rhs._size:
             return False
@@ -1791,6 +1795,9 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         return True
 
     # Upstream declares `__ne__` for views only (no `String` overload).
+    def __ne__(self, rhs_same: Self) -> Bool:
+        return self.__ne__(rhs=rhs_same)
+
     @inline(.always)
     def __ne__(self, rhs: StringSpan) -> Bool:
         return not (self == rhs)

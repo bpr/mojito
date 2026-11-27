@@ -8,6 +8,40 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A parameter typed by a struct with an unbound origin (`s: Span[Byte,
+  _]`, a bare `StringSpan`, `other: S`) is now generic over that origin
+  and its `mut=`, as upstream's `addImplicitTypeParams` declares the pair
+  for every struct, not only `Pointer` (R2376, R1156). Each call keys its
+  own instance, so `s.mut` reads the argument's mutability where it failed
+  as "not a compile-time constant", and `f(Span(xs), Span(xs))` over two
+  such parameters is rejected as aliasing where it ran
+  (`assets/ok/unbound_origin_parameter_binders.mojo`,
+  `assets/type_error/unbound_origin_arguments_alias.mojo`).
+  - A compile-time parameter's origin binders now solve from its bracket
+    argument's type, so `last[Span(xs)]` over `c: Span[Int, o]` runs where
+    it failed to infer `o`
+    (`assets/ok/compile_time_parameter_origin_binders.mojo`).
+  - A `comptime for` in a function with an origin binder no longer stops at
+    elaboration ("has no MIR declaration"): its lifted function ranges over
+    the argument binders only
+    (`assets/ok/comptime_for_beside_origin_binder.mojo`).
+  - An elaborated struct instance now keeps a `mut=` slot its own
+    declaration's binder decides beside an erased origin, so a pack element
+    reading `Self.mut` no longer meets `_REMOVED_ARG`.
+  - A losing method-overload candidate over a view no longer leaves its
+    temporary argument borrowed, so `p.extend(q.copy())` no longer destroys
+    the moved temporary twice
+    (`assets/ok/owned_overload_beside_view_temporary.mojo`).
+  - A local annotated with a struct whose origin it leaves unbound
+    (`var v: StringSpan = "abc"`) now takes the origin of the instance its
+    initializer's conversion builds, as it already did from an initializer
+    of the struct's own type.
+  - The bundled `StringSpan` declares upstream's `__eq__`/`__ne__(self,
+    rhs_same: Self)` witnesses, `Span.__ne__` reads no nested origin as
+    upstream's does, so `xs[0:2] != xs[1:3]` runs
+    (`assets/ok/list_slices_compared.mojo`), and the generated string tables
+    return `StringSpan[ImmStaticOrigin]`.
+
 - A default now solves the compile-time binders its parameter's type names
   when a call leaves the argument out, as upstream's call binds them from
   the default (R1926). `def f[O: ImmOrigin](s: StringSpan[O] =

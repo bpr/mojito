@@ -1785,8 +1785,18 @@ impl Checker {
                                 });
                             }
                             // An origin slot the annotation left to inference
-                            // takes the initializer's origin, as upstream.
-                            Self::bind_unbound_tails(&expected, &found)
+                            // takes the initializer's origin, as upstream: a
+                            // converted one's, the instance its conversion
+                            // builds.
+                            let converted = mojito_types::types::nominal_parts(&found)
+                                .zip(mojito_types::types::nominal_parts(&expected))
+                                .is_none_or(|((source, _), (target, _))| source != target)
+                                .then(|| self.converted_instance(&expected, &found, value))
+                                .flatten();
+                            Self::bind_unbound_tails(
+                                &expected,
+                                converted.as_ref().unwrap_or(&found),
+                            )
                         }
                     }
                     // Inferred `var x = e`: declare the value's materialized type.

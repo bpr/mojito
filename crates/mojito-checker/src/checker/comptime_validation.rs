@@ -5889,7 +5889,7 @@ impl Checker {
     /// it by, outermost declaration first: the enclosing struct's
     /// parameters, then each open declaration's type parameters, value
     /// packs' list binders, and non-callable value parameters, a `comptime
-    /// for` index among them.
+    /// for` index among them, but no origin and no `mut=` binder of one.
     fn binders_in_scope(&self) -> Vec<ParamExpr> {
         use mojito_types::param_expr::MetaTy;
         // `Self`'s binders: its argument binders and each origin's `mut=`
@@ -5955,12 +5955,25 @@ impl Checker {
                 .collect();
             lists.sort();
             binders.extend(lists);
-            let mut values: Vec<ParamExpr> = scopes
-                .values
-                .get(level)
-                .into_iter()
-                .flat_map(HashMap::values)
-                .filter(|value| value.as_decl_ref().is_some())
+            // A lifted function is applied to its declaration's argument
+            // binders, as a call is: no origin, nor the `mut=` binder an
+            // origin's type names.
+            let level_values = || {
+                scopes
+                    .values
+                    .get(level)
+                    .into_iter()
+                    .flat_map(HashMap::values)
+            };
+            let governed: HashSet<_> = level_values()
+                .filter_map(origin_mutability_binder)
+                .collect();
+            let mut values: Vec<ParamExpr> = level_values()
+                .filter(|value| {
+                    value.as_decl_ref().is_some_and(|reference| {
+                        !governed.contains(&reference.id) && !denotes_origin(value)
+                    })
+                })
                 .cloned()
                 .collect();
             values.sort();
@@ -8506,6 +8519,39 @@ fn classify_entry(
             *declared = ty;
         }
     }
+}
+
+/// The `mut=` binder the type of the origin binder reference `value`
+/// names (`o: Origin[mut=m]`'s `m`).
+fn origin_mutability_binder(value: &ParamExpr) -> Option<mojito_types::param_expr::ParamId> {
+    let ty = value.meta().as_value()?;
+    let mutability = match ty.kind() {
+        TyKind::LitOrigin(mojito_types::types::LitOriginMut::Expr(mutability)) => mutability,
+        kind => match kind.as_non_pointer_struct()? {
+            (name, arguments) if name == mojito_types::types::ORIGIN_TYPE_NAME => {
+                match arguments.first()? {
+                    TyArg::Val(CtValue::Expr(mutability)) => mutability,
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        },
+    };
+    mutability
+        .as_decl_ref()
+        .map(|reference| reference.id.clone())
+}
+
+/// Whether the binder reference `value` is an origin binder's: its type is
+/// an `Origin` value or an origin literal.
+fn denotes_origin(value: &ParamExpr) -> bool {
+    value.meta().as_value().is_some_and(|ty| {
+        matches!(ty.kind(), TyKind::LitOrigin(_) | TyKind::LitOriginSet)
+            || ty
+                .kind()
+                .as_non_pointer_struct()
+                .is_some_and(|(name, _)| name == mojito_types::types::ORIGIN_TYPE_NAME)
+    })
 }
 
 /// How many times the function body `body` spells each nested `def`'s

@@ -623,7 +623,7 @@ impl Checker {
                 if let Some(owner) = materialized {
                     Ok(*owner)
                 } else {
-                    let owner = self.fresh_owner()?;
+                    let owner = self.temporary_owner(expr)?;
                     *materialized = Some(owner);
                     Ok(owner)
                 }
@@ -632,7 +632,7 @@ impl Checker {
                 "reference binding to a non-place expression".to_string(),
             )),
             None => {
-                let owner = self.fresh_owner()?;
+                let owner = self.temporary_owner(expr)?;
                 record.adjustment = Some(Box::new(
                     mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource {
                         owner,
@@ -642,6 +642,23 @@ impl Checker {
                 Ok(owner)
             }
         }
+    }
+
+    /// The hidden slot the temporary `expr` materializes as: minted once
+    /// per source span and kept across a probe that rolls the span's
+    /// record back, so an overload the call selects after its candidates'
+    /// solves lends the slot those solves bound an origin binder to.
+    pub(in crate::checker) fn temporary_owner(
+        &self,
+        expr: &Expr,
+    ) -> Result<mojito_types::origin::OwnerId, TypeError> {
+        let span = expr.source_span();
+        if let Some(owner) = self.temporary_owners.borrow().get(&span) {
+            return Ok(*owner);
+        }
+        let owner = self.fresh_owner()?;
+        self.temporary_owners.borrow_mut().insert(span, owner);
+        Ok(owner)
     }
 
     /// Record a pointer-valued adjustment (`PointerToPlace`) at `span`, keeping the hidden holder an earlier inference of the span

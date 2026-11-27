@@ -156,7 +156,7 @@ def main() -> None:
     out.append("")
     for name, doc, width, rows in tables:
         out.append(f"# {doc} Record width {width}, {len(rows)} records.")
-        out.append(f"def {name}() -> StringSpan:")
+        out.append(f"def {name}() -> StringSpan[ImmStaticOrigin]:")
         out.append(f'    return """{records(rows, 6 if width != 16 else 16)}"""')
         out.append("")
         out.append("")

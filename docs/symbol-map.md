@@ -866,10 +866,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `ref [Self.origin]` argument, or a struct-typed argument carrying the binder
   among its arguments (a source converting implicitly to that struct as
   the view its conversion builds, or the instance a refined `out self`
-  names, `call_inference.rs::view_conversion_actual`,
+  names, `call_inference.rs::view_conversion_actual` over
+  `Checker::converted_instance`, which a local binding's annotation hole
+  reads too (`var v: StringSpan = "abc"`), and
   which `reference_solve_pair` and `reference_solve_pairs` read too, so a
   call's or construction's one solve binds the binder and its `mut=` binder
-  from the converted type), check an explicitly applied origin, and return
+  from the converted type, the reference the argument lends read under a
+  probe so a candidate the call does not select materializes nothing; a
+  temporary's hidden slot is minted once per source span across probes,
+  `origins/actuals.rs::Checker::temporary_owner`), check an explicitly applied origin, and return
   `ConstructorOriginBindings`, whose `substitute` rewrites the parameter types
   and whose `bind_origins` fills the constructed value's origin arguments,
   each at its binder's position (`constructed_type`, over
@@ -2530,7 +2535,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   so by `discharge_rebinds` and the verifier's rebound-place terminal type,
   and by the checker's rebind check); the
   elaborator keys an instance on each closed one
-  (`StructCatalog::closed_mutability`, in `substitute_ty`), erasing one no
+  (`StructCatalog::closed_mutability`, in `substitute_ty`, which reads a
+  slot over a binder the instance binds before an erased origin), erasing one no
   binding decides to `_REMOVED_ARG`, spells a member's owner arguments with
   them (`unify::owner_argument`, `owner_instance_ty`,
   `Specializer::enqueue`, `bind_static_receiver`), and binds a member's read
@@ -2585,13 +2591,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   method, a trait requirement, and a struct-typed compile-time parameter
   of a `def`, a struct, a `comptime` alias, or a struct's or a trait's
   parameterized `comptime` member. A binder spelled `Origin`
-  (`TypeParam::is_erased_origin_param`) is skipped. A direct `Pointer`
-  spelling's unbound origin gains upstream's infer-only `$origin_<arg>:
+  (`TypeParam::is_erased_origin_param`) is skipped. A struct's unbound
+  origin (`Span[T, _]`, a bare `StringSpan`), and a parametric alias's
+  (`MutPointer[T, _]`), gains upstream's infer-only `$origin_<arg>:
   Origin[mut=$mut_<arg>]` binder, its `mut` binder first when the
   application leaves `mut` unbound (`mutability_sibling`, `binder_for`
-  reading the declared `origin_mutability`); every other struct's
-  `Origin`-spelled slot, and a pointer alias's, is passed as `_` (R1156,
-  R2441). An alias-typed origin binder is not
+  reading the declared `origin_mutability`); a partial alias's hole is
+  passed as `_` (R2441). A call solves the pair from its argument's type,
+  a compile-time argument's included
+  (`Checker::bracket_origin_places`). An alias-typed origin binder is not
   recognized before the check, so it gains upstream's implicit binders
   (R2396).
   The check solves an infer-only value binder from a later bracket

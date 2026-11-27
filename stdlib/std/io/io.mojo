@@ -41,8 +41,9 @@ def print[
     # interpreter's too.
     var buffer = _FlushingWriteBuffer(file)
     # Upstream's `values._write_to(buffer, sep=sep, end=end)`: a bare
-    # `StringSlice` parameter declares no origin binder yet, so `sep` and
-    # `end` cannot solve `_write_to`'s `O3` and `O2` (R2376).
+    # `StringSlice` parameter declares a `mut` binder beside its origin, so
+    # `sep` and `end` do not convert to `_write_to`'s `ImmOrigin` spans
+    # (R1916).
     comptime for i in range(values.__len__()):
         comptime if i > 0:
             buffer.write(sep)
