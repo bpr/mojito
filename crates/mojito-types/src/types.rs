@@ -8506,33 +8506,24 @@ pub fn has_free_parameters(ty: &Ty) -> bool {
 /// position — a SIMD width, a value argument, a pack element's index, a
 /// query over the pack it is — or of a type embedded in one.
 pub fn names_binder(ty: &Ty, binder: &ParamRef) -> bool {
-    struct Finder<'a> {
-        binder: &'a ParamRef,
-        found: bool,
-    }
-    impl TyRewrite for Finder<'_> {
-        fn param(&mut self, binder: &ParamRef) -> Option<Ty> {
-            self.found |= binder == self.binder;
-            None
-        }
-
-        fn expr(&mut self, expr: &ParamExpr) -> Result<ParamExpr, ParamError> {
-            expr.visit(&mut |node| {
-                self.found |= matches!(node.kind(), ParamKind::DeclRef(reference) if reference == self.binder)
-                    || node
-                        .embedded_types()
-                        .into_iter()
-                        .any(|ty| names_binder(ty, self.binder));
-            });
-            Ok(expr.clone())
-        }
-    }
-    let mut finder = Finder {
+    let mut finder = BinderFinder {
         binder,
         found: false,
     };
     // The finder never fails; the rebuilt type is discarded.
     let _ = rewrite_ty(ty, &mut finder);
+    finder.found
+}
+
+/// [`names_binder`] over one compile-time value: a function reference's
+/// arguments (`twice[k]`) included.
+pub fn value_names_binder(value: &CtValue, binder: &ParamRef) -> bool {
+    let mut finder = BinderFinder {
+        binder,
+        found: false,
+    };
+    // The finder never fails; the rebuilt value is discarded.
+    let _ = rewrite_value(value, &mut finder);
     finder.found
 }
 
@@ -10225,6 +10216,30 @@ fn origin_struct_ty(mutable: CtValue, origin: crate::origin::Origin) -> Ty {
         vec![TyArg::Val(mutable), TyArg::Origin(origin)],
     )
     .into()
+}
+
+/// The [`TyRewrite`] [`names_binder`] and [`value_names_binder`] walk with.
+struct BinderFinder<'a> {
+    binder: &'a ParamRef,
+    found: bool,
+}
+
+impl TyRewrite for BinderFinder<'_> {
+    fn param(&mut self, binder: &ParamRef) -> Option<Ty> {
+        self.found |= binder == self.binder;
+        None
+    }
+
+    fn expr(&mut self, expr: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        expr.visit(&mut |node| {
+            self.found |= matches!(node.kind(), ParamKind::DeclRef(reference) if reference == self.binder)
+                || node
+                    .embedded_types()
+                    .into_iter()
+                    .any(|ty| names_binder(ty, self.binder));
+        });
+        Ok(expr.clone())
+    }
 }
 
 #[cfg(test)]

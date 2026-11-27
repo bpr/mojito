@@ -5193,7 +5193,12 @@ impl Checker {
                             .insert(pname.trim_start_matches('*').to_string(), value.clone());
                         tyargs.push(TyArg::Val(value));
                     } else if callable_default.is_some() {
-                        let value = omitted_callable_value(decl, &value_environment);
+                        let value = omitted_callable_value(
+                            &self.param_context,
+                            decls,
+                            decl,
+                            (&value_environment, &subst),
+                        );
                         tyargs.push(TyArg::Val(value));
                     } else {
                         let unsolved = decl.list_pack(decls).unwrap_or(decl);
@@ -6859,15 +6864,7 @@ fn default_argument(
         // earlier parameters it reads are their arguments (`w[dtype]()` at
         // `dtype = DType.float32`).
         Err(_) if value.meta().as_value() == Some(ty) => {
-            let mut bindings = mojito_types::param_expr::ParamBindings::new();
-            for decl in decls {
-                if let Some(argument) = environment
-                    .get(decl.spelling())
-                    .and_then(|argument| params.constant(argument.clone()).ok())
-                {
-                    bindings.bind(decl.id().clone(), argument);
-                }
-            }
+            let bindings = environment_bindings(params, decls, environment);
             return Ok(CtValue::Expr(
                 params
                     .replace(value, &bindings)
@@ -6911,36 +6908,136 @@ fn substituted_own_decl(decl: &ParamDecl, struct_subst: &TySubst) -> ParamDecl {
 }
 
 /// The value an omitted callable parameter with a default takes, for a
-/// struct and a `def` alike: the function its default names, or the
-/// value the earlier callable parameter it repeats took (a symbol or an
-/// enclosing binder's reference), as the pin keys `S[f = seven]` by
-/// `#kgen.func.symbol<@seven>`. A conditional default, and a repeat of
-/// a deferred slot, stay deferred for the elaborator's defaults.
-fn omitted_callable_value(decl: &ParamDecl, environment: &HashMap<String, CtValue>) -> CtValue {
-    let symbol = match decl {
+/// struct and a `def` alike, as upstream's call holds the default at the
+/// call's binding of the earlier binders it reads: the function its default
+/// names, `environment` and `subst` closing a specialization over earlier
+/// binders (`twice[k]` is `twice[5]`, or `twice[j]` over a caller's open
+/// `j`); the value the earlier callable parameter it repeats took (a symbol
+/// or an enclosing binder's reference); or the arm a condition the call
+/// decides selects, as the pin keys `S[f = seven]` by
+/// `#kgen.func.symbol<@seven>`. A condition the call leaves open, a repeat
+/// of a deferred slot, and a specialization over a binder the use leaves
+/// unbound stay deferred for the elaborator's defaults.
+fn omitted_callable_value(
+    params: &mojito_types::param_expr::ParamContext,
+    decls: &[ParamDecl],
+    decl: &ParamDecl,
+    bound: (&HashMap<String, CtValue>, &TySubst),
+) -> CtValue {
+    match decl {
         ParamDecl::Value {
             callable_default: Some(default),
+            ty,
             ..
-        } => match default {
-            // A specialization over an earlier binder (`twice[k]`) closes
-            // only under the instance, so the elaborator's defaults bind it.
-            CallableDefault::Symbol(symbol) => {
-                let value = CtValue::FuncSymbol(symbol.clone());
-                (!mojito_types::types::ct_value_is_symbolic(&value)).then_some(value)
-            }
-            CallableDefault::Parameter(earlier) => environment
-                .get(&*earlier.name)
-                .filter(|value| match value {
-                    CtValue::FuncSymbol(_) => true,
-                    CtValue::Expr(binder) => binder.as_decl_ref().is_some(),
-                    _ => false,
-                })
-                .cloned(),
-            CallableDefault::If { .. } => None,
-        },
+        } => callable_default_value(params, decls, (default, ty), bound),
         _ => None,
+    }
+    .unwrap_or_else(|| CtValue::Deferred(decl.binder()))
+}
+
+/// The bindings of each of `decls` `environment` holds an argument for,
+/// under its spelling: its constant, or its residual expression over the
+/// caller's binders.
+fn environment_bindings(
+    params: &mojito_types::param_expr::ParamContext,
+    decls: &[ParamDecl],
+    environment: &HashMap<String, CtValue>,
+) -> mojito_types::param_expr::ParamBindings {
+    let mut bindings = mojito_types::param_expr::ParamBindings::new();
+    for decl in decls {
+        if let Some(argument) = environment
+            .get(decl.spelling())
+            .and_then(|argument| params.constant(argument.clone()).ok())
+        {
+            bindings.bind(decl.id().clone(), argument);
+        }
+    }
+    bindings
+}
+
+/// [`omitted_callable_value`]'s value of `default`, or `None` when the call
+/// leaves it open.
+fn callable_default_value(
+    params: &mojito_types::param_expr::ParamContext,
+    decls: &[ParamDecl],
+    (default, ty): (&CallableDefault, &Ty),
+    (environment, subst): (&HashMap<String, CtValue>, &TySubst),
+) -> Option<CtValue> {
+    match default {
+        CallableDefault::Symbol(symbol) => {
+            let value = CtValue::FuncSymbol(symbol.clone());
+            let mut bindings = environment_bindings(params, decls, environment);
+            for (id, ty) in subst {
+                bindings.bind_type(id.clone(), ty.clone());
+            }
+            binds_every_read(params, decls, &value, (environment, subst))
+                .then(|| mojito_types::types::replace_value_parameters(params, &value, &bindings))
+                .and_then(Result::ok)
+        }
+        CallableDefault::Parameter(earlier) => environment
+            .get(&*earlier.name)
+            .filter(|value| match value {
+                CtValue::FuncSymbol(_) => true,
+                CtValue::Expr(binder) => binder.as_decl_ref().is_some(),
+                _ => false,
+            })
+            .cloned(),
+        CallableDefault::If {
+            condition,
+            then_value,
+            else_value,
+        } => {
+            let arm = |arm: &CallableDefault| {
+                callable_default_value(params, decls, (arm, ty), (environment, subst))
+            };
+            match condition.evaluate_named(environment) {
+                Ok(CtValue::Bool(true)) => arm(then_value),
+                Ok(CtValue::Bool(false)) => arm(else_value),
+                // A condition over the caller's open binders selects
+                // lazily, upstream's `POC::Cond` over the two arms.
+                _ => {
+                    let read = CtValue::Expr(condition.clone());
+                    if !binds_every_read(params, decls, &read, (environment, subst)) {
+                        return None;
+                    }
+                    let bindings = environment_bindings(params, decls, environment);
+                    let operand = |value: CtValue| match value {
+                        CtValue::Expr(expr) => Some(expr),
+                        value => params.constant_as(value, ty).ok(),
+                    };
+                    let operands = [
+                        params.replace(condition, &bindings).ok()?,
+                        operand(arm(then_value)?)?,
+                        operand(arm(else_value)?)?,
+                    ];
+                    params
+                        .op(mojito_types::param_expr::ParamOp::Cond, &operands)
+                        .ok()
+                        .map(CtValue::Expr)
+                }
+            }
+        }
+    }
+}
+
+/// Whether the call binds each of `decls` that `value` reads: a type binder
+/// in `subst`, a value binder in `environment`, as a constant or a residual
+/// over the caller's binders.
+fn binds_every_read(
+    params: &mojito_types::param_expr::ParamContext,
+    decls: &[ParamDecl],
+    value: &CtValue,
+    (environment, subst): (&HashMap<String, CtValue>, &TySubst),
+) -> bool {
+    let bound = |earlier: &ParamDecl| match earlier {
+        ParamDecl::Type { id, .. } => subst.contains_key(id),
+        _ => environment
+            .get(earlier.spelling())
+            .is_some_and(|argument| params.constant(argument.clone()).is_ok()),
     };
-    symbol.unwrap_or_else(|| CtValue::Deferred(decl.binder()))
+    decls.iter().all(|earlier| {
+        bound(earlier) || !mojito_types::types::value_names_binder(value, &earlier.binder())
+    })
 }
 
 impl Checker {
@@ -7216,7 +7313,12 @@ impl Checker {
                 ..
             } = decl
             {
-                TyArg::Val(omitted_callable_value(decl, &value_environment))
+                TyArg::Val(omitted_callable_value(
+                    &self.param_context,
+                    decls,
+                    decl,
+                    (&value_environment, &subst),
+                ))
             } else if let ParamDecl::Value {
                 default: Some(value),
                 ty,

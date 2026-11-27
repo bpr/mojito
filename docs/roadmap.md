@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2646**.
+Next free ID: **R2647**.
 
 ## Ordered Work
 
@@ -92,17 +92,26 @@ slice.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2638 A callable default that reads an earlier binder records its
-  symbol as a placeholder**
+- [ ] **R2646 A function specialization over a caller's open binders has
+  no parameter-expression form**
 
-  `run_earlier[5]()` over `f: def() thin -> Int = twice[k]` records
-  `ct_deferred(f)`, where upstream's call holds the default's symbol at the
-  call's `k`.
-  - Cause: `omitted_callable_value` (`checker/declarations.rs`) defers a
-    default symbol that reads an earlier binder.
-  - Lever: substitute the call's binding of `k` into the symbol
-    (`twice[5]`), or leave it open over the caller's binder.
-  - Probe: `assets/ok/callable_param_specialized_function.mojo`.
+  `pick[j, b]()` inside `outer[j: Int, b: Bool]`, over `f: def() thin ->
+  Int = twice[k] if e else twice[0]`, records `ct_deferred(f)`, where
+  upstream's call holds the default's `POC::Cond` over `b` with each arm
+  the symbol at the call's binding (`twice[j]`, `twice[0]`).
+  - Cause: a specialization over open binders is a `ct::FuncSymbolRef`
+    whose arguments hold `ct_expr` values, a `CtValue` rather than a
+    `ParamExpr`. `ParamContext::constant_as` rejects it as not closed, so
+    `callable_default_value` (`checker/declarations.rs`) cannot build the
+    `cond` operand and defers the slot.
+  - Lever: spell the arm as upstream's `#kgen.bind_params` over the
+    function's symbol (`ParamContext::bind_params`), which folds to the
+    closed `ct_func_symbol` once the instance binds `j`.
+  - A decided condition, and an open one whose arms are closed symbols
+    (`increment if e else decrement`), already record their value.
+  - Probe: `print(outer[3, True]() + outer[3, False]())` over `def
+    twice[n: Int]() -> Int: return n * 2` prints `6`; its call's
+    application must hold no `ct_deferred`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -131,7 +140,7 @@ slice.
   - Docs: `verify_application` in `docs/architecture.md`, the
     `ct_deferred` meanings in `docs/mir-text-format.md`, and B1e.
   - Slice B1e of `docs/call-application-plan.md`.
-  - Depends on R2633, R2634, R2638, R2439 (a call that infers no
+  - Depends on R2633, R2634, R2638, R2646, R2439 (a call that infers no
     origin for an open binder records `_`), R2517 (a
     synthesized move's register type keeps its member's own deferred
     `mut=`), and R2376 (`freeze(other: S)` declares no binder to name its
@@ -4772,6 +4781,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     the pin prints `1`. Once the default resolves,
     `omitted_callable_value` (`checker/declarations.rs`) already keys it
     by the symbol.
+  - Probe: `S[4].go()` over `struct S[k: Int, f: def() thin -> Int =
+    twice[k]]` returning `Self.f()` fails the same way; once it resolves,
+    `omitted_callable_value` records `twice[4]`, as for a `def`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

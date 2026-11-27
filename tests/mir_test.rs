@@ -3408,6 +3408,71 @@ fn ref_receiver_own_origin_binders_record_the_receivers_origin() {
 }
 
 #[test]
+fn callable_default_over_earlier_binders_records_its_symbol_at_the_call() {
+    // An omitted callable default that reads earlier binders holds its value
+    // at the call's binding of them, as upstream's call fills the default:
+    // `twice[k]` at `k = 5` is `twice[5]`, over a caller's open `j` it is
+    // `twice[j + 1]`, and a conditional the call decides is its arm, one it
+    // leaves open a `cond` over the caller's binder. No slot is deferred.
+    use mojito::CtValue;
+    use mojito::types::TyArg;
+    let source = "def increment(value: Int) -> Int:\n    return value + 1\n\ndef decrement(value: Int) -> Int:\n    return value - 1\n\ndef twice[n: Int]() -> Int:\n    return n * 2\n\ndef run_earlier[k: Int, f: def() thin -> Int = twice[k]]() -> Int:\n    return f()\n\ndef conditional[enabled: Bool = False, callback: def(Int) thin -> Int = increment if enabled else decrement](value: Int) -> Int:\n    return callback(value)\n\ndef mid[j: Int]() -> Int:\n    return run_earlier[j + 1]()\n\ndef open_choice[e: Bool]() -> Int:\n    return conditional[e](10)\n\ndef main():\n    print(run_earlier[5]())\n    print(mid[3]())\n    print(conditional(10))\n    print(conditional[True](10))\n    print(open_choice[True]() + open_choice[False]())\n";
+    let compiler = Compiler::default();
+    let compiled = compiler
+        .compile_source(source, Path::new("callable_default_earlier.mojo"))
+        .expect("compile callable defaults over earlier binders");
+    let execution = compiler.execute(&compiled).expect("run callable defaults");
+    assert_eq!(execution.output, "10\n8\n9\n11\n20\n");
+    let applications = |caller: &str, callee: &str| -> Vec<Vec<TyArg>> {
+        compiled
+            .mir()
+            .functions
+            .iter()
+            .filter(|(name, _)| name == caller)
+            .flat_map(|(_, function)| function.body.instrs.iter())
+            .filter_map(|instruction| match instruction {
+                MirInstr::Call {
+                    func,
+                    instantiated_args,
+                    ..
+                } if func.0 == callee => Some(instantiated_args.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    let symbol = |argument: &TyArg| match argument {
+        TyArg::Val(CtValue::FuncSymbol(symbol)) => Some(symbol.to_string()),
+        _ => None,
+    };
+    let earlier = applications("main", "run_earlier");
+    assert_eq!(earlier.len(), 1, "{earlier:?}");
+    assert_eq!(symbol(&earlier[0][1]).as_deref(), Some("twice[5]"));
+    let forwarded = applications("mid", "run_earlier");
+    assert_eq!(forwarded.len(), 1, "{forwarded:?}");
+    assert!(
+        matches!(&forwarded[0][1], TyArg::Val(CtValue::FuncSymbol(symbol))
+            if symbol.symbol == "twice"
+                && matches!(symbol.arguments.as_slice(), [TyArg::Val(CtValue::Expr(_))])),
+        "{forwarded:?}"
+    );
+    let decided = applications("main", "conditional");
+    let arms: Vec<_> = decided
+        .iter()
+        .map(|arguments| symbol(&arguments[1]))
+        .collect();
+    assert_eq!(
+        arms,
+        [Some("decrement".to_string()), Some("increment".to_string())]
+    );
+    let open = applications("open_choice", "conditional");
+    assert_eq!(open.len(), 1, "{open:?}");
+    assert!(
+        matches!(&open[0][1], TyArg::Val(CtValue::Expr(_))),
+        "{open:?}"
+    );
+}
+
+#[test]
 fn alias_bracket_hole_records_the_inferred_origin() {
     // A call through a `comptime` alias that leaves an origin binder open
     // (`first[_, 6]`) is the call of the aliased function at its whole

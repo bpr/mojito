@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An omitted callable default that reads earlier binders
+  (`f: def() thin -> Int = twice[k]`) is now recorded in the call's
+  application at the call's binding of them (`twice[5]` at
+  `run_earlier[5]()`, `twice[j]` over a caller's open `j`) instead of as a
+  `ct_deferred` placeholder (R2638), as upstream's call fills the default.
+  A conditional default records the arm the call decides, or a `cond` over
+  the caller's open binders. Output is unchanged.
+
 - A call through a `comptime` alias that leaves an origin open
   (`comptime plus_six = first[_, 6]`) now records, in the callee's
   application, the origin its argument binds instead of `_` (R2636), as
