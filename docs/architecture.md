@@ -8482,7 +8482,7 @@ point where a slot declared in a loop is uninitialized again.
   level a round. A pointer field keeps the slot until its own slot takes
   the instance's pointer type and places past it read as the field's did
   (R2181, R2182), and so does a `ref` field, whose own slot would need
-  each place past it to go `through` it (R2183). The `--timings` counters are `split_slots`
+  each place past it to go `through` it (R2667). The `--timings` counters are `split_slots`
   and `split_field_slots`.
 - **`mem-2-reg` runs before each round's `canonicalize`**
   (`analysis::MEM_2_REG`, `analysis/mem2reg.rs`, R787), upstream's
@@ -9511,7 +9511,7 @@ representation, each decided in `build_structs`, and are the VM's alone:
 - A struct whose field is a reference stays boxed: a held struct's slot
   is typed as the struct, not as a reference, and a held closure storage
   of one `ref` capture loses its write through a `__call__` witness call
-  when the struct is held as its field (R2184). A struct held as its pointer field is a pointer
+  when the struct is held as its field (R2667). A struct held as its pointer field is a pointer
   value, as a `Pointer` slot is: its whole place is the pointer, a
   `Value::PlacePointer`.
 - Every instance of a template is held or none is: an erased instance

@@ -30,11 +30,11 @@ struct _OptionalIter[
 ](Iterator where conforms_to(T, Copyable)):
     comptime Element = Self.T
 
-    var src: ref[iterable_origin] Optional[Self.T]
+    var src: Pointer[Optional[Self.T], Self.iterable_origin]
     var index: Int
 
     def __len__(self) -> Int:
-        return self.src._size - self.index
+        return self.src[]._size - self.index
 
     @inline(.always)
     def bounds(self) -> Tuple[Int, Optional[Int]]:
@@ -47,10 +47,10 @@ struct _OptionalIter[
     def __next__(mut self) raises StopIteration -> Self.T where conforms_to(
         Self.T, Copyable
     ):
-        if self.index >= self.src._size:
+        if self.index >= self.src[]._size:
             raise StopIteration()
         self.index += 1
-        return self.src.data[0].copy()
+        return self.src[].data[0].copy()
 
 struct _OptionalOwnedIter[T: AnyType](
     Deinitable where conforms_to(T, Deinitable),
@@ -364,8 +364,8 @@ struct Optional[T: AnyType](
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)] where conforms_to(
         Self.T, Copyable
     ):
-        ref source = self
-        return _OptionalIter(source, 0)
+        # The cast keeps `self`'s mutability until R1300 lands.
+        return _OptionalIter(Pointer(to=self).unsafe_origin_cast[origin_of(self)](), 0)
 
     def __iter__(var self) -> _OptionalOwnedIter[Self.T] where conforms_to(
         Self.T, Movable

@@ -189,7 +189,6 @@ inplace-subscript-dunders	run	conformance/fixtures/inplace_subscript_dunders.moj
 advanced-origins	reject	conformance/fixtures/advanced_origins.mojo
 pointer-origin-aggregate	run	conformance/fixtures/pointer_origin_aggregate.mojo
 hidden-unsafe-any-origin	reject	conformance/fixtures/hidden_unsafe_any_origin.mojo
-reference-valued-aggregate	mojito-only	conformance/fixtures/reference_valued_aggregate.mojo
 erased-origin-parameter	reject	assets/type_error/erased_origin_parameter.mojo
 origin-carrying-callable-struct	reject	assets/type_error/origin_carrying_callable_struct.mojo
 reference-carrier-collection	run	assets/ok/reference_carrier_collection.mojo

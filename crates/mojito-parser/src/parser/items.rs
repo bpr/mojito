@@ -204,8 +204,11 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     let fname = self.expect_identifier("Expected a field name")?;
                     reject_parameter_redefinition(&type_params, &fname, self.last_span)?;
                     self.expect(&Token::Colon, "Fields require a type annotation")?;
-                    let (ty, reference) =
-                        self.parse_reference_slot("a 'ref' field requires an origin specifier")?;
+                    let at = self.peek_start();
+                    let (ty, reference) = self.parse_reference_slot(REF_FIELD)?;
+                    if reference.is_some() {
+                        return Err(ParseError::Message(REF_FIELD.to_string()).at((at, at)));
+                    }
                     if matches!(self.peek_token()?, Some(Token::Assign)) {
                         self.next_token()?;
                         self.parse_expression(Precedence::Lowest)?;
@@ -1325,3 +1328,6 @@ fn split_initializer_receiver(
     };
     Ok((Some(receiver), list))
 }
+
+/// The pin's words for a `ref` field declaration, which it rejects at parse.
+const REF_FIELD: &str = "'ref' patterns are only valid on the left side of an assignment";

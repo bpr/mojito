@@ -31,8 +31,7 @@ folder it would otherwise use (`extensions/ok`, `extensions/type_error`,
 the inverse: the pinned Mojo must reject every extension fixture, so one that
 starts compiling is the signal that upstream caught up.
 
-Two kinds live there. An extension **kept on purpose** — today, direct `ref`
-struct fields (`var f: ref[o] T`), which upstream rejects and may adopt later,
+Two kinds live there. An extension **kept on purpose** — today,
 `Origin._subtree` casts, which upstream parses but rejects at the use, and the
 `enum` keyword of upstream's enum proposal, which the pin spells `__enum` — is
 listed in `docs/non-goals.md`. A **ledgered divergence** is one Mojito means to withdraw:
@@ -41,17 +40,14 @@ erasure, a cross-origin field store, a parametric-mut pointer write, a partial
 field move, an owned-interior
 generation, a Mojito-only stdlib module, a move in an untaken `comptime if`
 arm or an unrolled `comptime for` body — and it carries a header comment
-naming the divergence, which `docs/roadmap.md`'s divergence ledger tracks. When
-a `ref`-field fixture's `Pointer` twin is itself one of these, it joins it here
-under the `pointer_field_` name rather than staying in the ordinary folder.
+naming the divergence, which `docs/roadmap.md`'s divergence ledger tracks.
 
 The harnesses run these through the same
 groups (named `assets_extensions_<folder>::…`, `vm_ok::extensions::…`, and
 so on) and the native parity manifest covers `extensions/ok` and
-`extensions/ownership_ok`. When a `ref`-field fixture has a Mojo-valid twin
-that spells the storage through `Pointer[T, origin]`, the twin keeps the
-same file name in the ordinary folder, with a `ref_field_` prefix respelled
-`pointer_field_`.
+`extensions/ownership_ok`. The `pointer_field_` fixtures in the ordinary
+folders are the `Pointer[T, origin]` twins of the withdrawn `ref`-field
+fixtures (`docs/non-goals.md`).
 
 Grab a Mojo file off the net, decide where mojito should currently land on it,
 and drop it in that folder. When mojito gains a feature, a file "graduates" to an

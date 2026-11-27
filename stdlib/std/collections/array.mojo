@@ -28,11 +28,11 @@ struct _ArrayIter[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
     ] = Self
 
-    var src: ref[iterable_origin] Array[Self.T, Self.length]
+    var src: Pointer[Array[Self.T, Self.length], Self.iterable_origin]
     var index: Int
 
     def __len__(self) -> Int:
-        return len(self.src) - self.index
+        return len(self.src[]) - self.index
 
     @inline(.always)
     def bounds(self) -> Tuple[Int, Optional[Int]]:
@@ -48,11 +48,11 @@ struct _ArrayIter[
     def __next__(mut self) raises StopIteration -> ref[
         Self.iterable_origin._get_owned_interior["element"]
     ] Self.T where conforms_to(Self.T, Copyable):
-        if self.index >= len(self.src):
+        if self.index >= len(self.src[]):
             raise StopIteration()
         var r = self.index
         self.index += 1
-        return self.src[r]
+        return self.src[][r]
 
 struct _ArrayOwnedIter[T: AnyType](
     Deinitable where conforms_to(T, Deinitable),
@@ -296,8 +296,8 @@ struct Array[T: AnyType, length: Int](
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)] where conforms_to(
         Self.T, Copyable
     ):
-        ref source = self
-        return _ArrayIter(source, 0)
+        # The cast keeps `self`'s mutability until R1300 lands.
+        return _ArrayIter(Pointer(to=self).unsafe_origin_cast[origin_of(self)](), 0)
 
     def __iter__(var self) -> _ArrayOwnedIter[Self.T] where conforms_to(
         Self.T, Movable

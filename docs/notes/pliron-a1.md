@@ -57,7 +57,7 @@ thresholds.
 | Pliron | git `477e6b0edb18b29df4cf7b90f0f468dc8a872f22` (`pliron`, `pliron-llvm`) |
 | LLVM | 23.1.0 at `/opt/llvm-23`, `llvm-sys` 231 |
 | Host | Linux 7.1.1, Intel Core i7-10875H |
-| Gate | `assets/extensions/ok/pliron_a1_gate.mojo`, sha256 `b337ee1c…7b50f032` |
+| Gate | `assets/extensions/ok/pliron_a1_gate.mojo` at `1967fe1d` (deleted with `ref` fields, 2026-11-27), sha256 `b337ee1c…7b50f032` |
 
 ## The gate and its prerequisite
 

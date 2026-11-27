@@ -656,7 +656,7 @@ trait_composition: expression    # each '&' member one trait entry
 struct_block: NEWLINE INDENT struct_member+ DEDENT
 struct_member: field | struct_comptime | method
 field: 'var' NAME ':' field_type NEWLINE
-field_type: 'ref' origin_spec type | type   # the kept direct `ref` field (docs/non-goals.md)
+field_type: type    # a leading 'ref' is rejected, as at the pin (docs/non-goals.md)
 struct_comptime: 'comptime' NAME [params_decl] [':' type] where_clause* '=' expression NEWLINE
 method: decorators 'def' NAME [params_decl] '(' [receiver [',' params] | params] ')' ['raises' [type]] ['->' result_type] where_clause* ':' block
 receiver: [convention] 'self' [':' type]    # instance method or any __init__; absent ⇒ a @staticmethod (no self)
@@ -1427,11 +1427,11 @@ operand is the result's address space, upstream's `ref[Self.origin,
 Self.address_space] Self.T`). Signature checking substitutes
 parameter/receiver origins at calls and rejects invalid escapes. The origin
 is required: `-> ref T` is a parse error ("'ref' result requires an origin
-specifier"), as at the pin. A kept direct `ref` field (`var f: ref[o] T`)
-stores its specifier as the field's convention the same way, and an
-origin-less one is a parse error too. `ref` is contextual only after `->`
-and after a field's `:`, and only when a `[` or a type-starting token
-follows; anywhere else (a local's or parameter's annotation, a bracket
+specifier"), as at the pin. A field's `ref` (`var f: ref[o] T`, or an
+origin-less `var f: ref T`) is a parse error, "'ref' patterns are only
+valid on the left side of an assignment", as at the pin. `ref` is
+contextual only after `->` and after a field's `:`, and only when a `[` or
+a type-starting token follows; anywhere else (a local's or parameter's annotation, a bracket
 argument) `ref[o] T` is the expression `ref[o]` and a stray referent, which
 fails to parse, as at the pin.
 

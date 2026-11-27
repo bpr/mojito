@@ -72,21 +72,6 @@ lists them under *Implementation status* as not yet implemented.
 
 ## Kept On Purpose
 
-### Direct `ref` struct fields stay a Mojito extension
-
-Not to be removed: upstream rejects `var f: ref[o] T` fields (`'ref' patterns
-are only valid on the left side of an assignment`) and spells reference
-storage through `Pointer[T, origin]`, but upstream has signalled that `ref`
-fields may arrive, so Mojito keeps the capability (2026-09-09 decision; the
-stdlib's six `ref`-field structs stay as they are). The extension is the
-field declaration alone: a `ref` type argument (`Tuple[ref[o] Int]`,
-`List[ref[o] Int]`) is rejected at parse with the pin's own "expected ']' in
-call argument list", and reference-valued elements are spelled
-`Pointer[T, origin]`, as upstream spells them. The field's `ref[...]` is
-stored as the field's convention (`Param::reference`) beside its referent,
-the way a result's `ref` is the result's convention, never as a type, and
-its origin is required at parse.
-
 ### `Origin._subtree` casts stay under `assets/extensions/`
 
 Not to be removed: `origin_of(self)._subtree` is upstream's own experimental
@@ -137,19 +122,8 @@ is rejected at the pin, and Mojito does not accept `__enum` or `__union`.
   folders. Likewise when a pin declares the three traits: the fixtures
   spelling them return to the ordinary folders.
 
-These are the three admitted extensions under the match-or-subset rule
+These are the two admitted extensions under the match-or-subset rule
 (`AGENTS.md` invariant 1).
-
-- Fixtures that use `ref` fields live under `assets/extensions/<folder>/`;
-  the ordinary `assets/` folders hold only programs the pinned Mojo compiles
-  (`assets/README.md`).
-- Where a `ref`-field fixture has a Mojo-valid twin, the twin spells the
-  storage through `Pointer[T, origin]` under the same name with "ref_field"
-  replaced by "pointer_field" in the ordinary folder.
-- `conformance/fixtures/reference_valued_aggregate.mojo`, a direct `ref`
-  field written through, stays a `mojito-only` row until upstream decides.
-- If upstream lands `ref` fields, re-probe the extension fixtures against the
-  new spelling and promote them back — that is a roadmap task, not this one.
 
 ### Interior-reference and unsafe-memory strictness exceeds the pin
 
@@ -198,12 +172,11 @@ the opposite case and stay on `docs/roadmap.md` as `divergence` rows.
 ### Divergences retained across re-pins
 
 The behavioral-divergences track in `docs/roadmap.md` (`divergences`) burns divergences to
-zero. These five are exempt and are re-probed at every nightly re-pin rather
+zero. These four are exempt and are re-probed at every nightly re-pin rather
 than fixed.
 
 - `subtree-origin-cast`: a cited bridge to upstream's `#lit.origin.subtree`
   experiment; its fixtures live under `assets/extensions/` (above).
-- `reference-valued-aggregate`: the `ref` field extension above.
 - `deinit-body-field-loop-read` (`output-diff`): the pinned Mojo destroys a
   `deinit self` field that is read only inside a loop body at the
   destructor's entry and then reads the destroyed value. That is an upstream
@@ -268,6 +241,68 @@ that fixture (`PIPELINE_DECIDES` in `tests/corpus_test.rs`).
 - Reopen only if the pin starts running `RemoveUnusedParams` at every
   level, so that a fresh `mojo run -O0` of the fixture stops printing
   `side`.
+
+### Direct `ref` struct fields are rejected, as at the pin
+
+Withdrawn 2026-11-27 (owner's decision): `var f: ref[o] T` is rejected at
+parse with the pin's "'ref' patterns are only valid on the left side of an
+assignment" (`assets/parse_error/ref_struct_field.mojo`). Reference storage
+is spelled `Pointer[T, origin]`, as upstream spells it. The extension, kept
+since 2026-09-09, ran a second representation of stored references beside
+`Pointer` through the checker, MIR, ownership analysis, and both backends.
+
+- The bundled iterators that held a `ref` source (`_ListIter`,
+  `_ListReversedIter`, `_OptionalIter`, `_ArrayIter`, `_TakeDictEntryIter`)
+  hold a `Pointer` built by `Pointer(to=self)`, as upstream's `_ArrayIter`
+  does.
+- The extension's 117 fixtures and the tests built on them were deleted.
+  The `pointer_field_*` fixtures in the ordinary folders cover the `Pointer`
+  spelling.
+- Closure capture storage still declares `ref` fields internally, so the
+  machinery stays until R2667 and R2668 remove it.
+- Reopen when upstream accepts a `ref` field.
+
+### Rare origin-binder shapes stay rejected
+
+The pin accepts each shape below, and Mojito rejects it with a checker
+error (owner's triage, 2026-11-27). Completing the call record of
+`docs/call-application-plan.md` drew each one in as a prerequisite, and
+supporting them cost more than the programs they admit. Each shape has a
+spelling that runs, given beside it.
+
+- A function value with a `_` hole over a type or value binder:
+  `comptime f = first[_, 6]`, then `f[1](2)`, is "cannot infer type
+  parameter 'n'". An origin hole whose binder has an infer-only `mut=`
+  sibling is "not a compile-time constant here". Spell the binders at the
+  call. A local alias with an origin hole runs, through an indirect call
+  where the pin calls directly (formerly R2641, R2642).
+- A struct's or method's origin binder typed by an alias of bare `Origin`
+  (`o: O` over `comptime O = Origin`), or spelled `Origin[mut=m,
+  _mlir_origin=r]`, is a type mismatch at its declaration. Spell `o:
+  Origin[mut=m]` with its `m`. A free function's binder of either shape runs
+  (formerly R2645).
+- An origin binder with a default (`[o: ImmOrigin = ImmutAnyOrigin]`) is
+  refused at its declaration as unsupported (formerly R2648).
+- A static method does not bind its struct's origin binders from its
+  arguments: `V.mk(Pointer(to=y))` is "no overload matches". Spell
+  `V[origin_of(y)].mk(…)` (formerly R2649).
+- An initializer's default does not solve its struct's origin binders, so
+  `def __init__(out self, s: StringSpan[Self.o] = StaticString("init"))` is
+  a type mismatch at its declaration (formerly R2661).
+- A compile-time parameter of a view type does not bind its origin or
+  `mut=` binders through a spelled `mut=` slot, as in `c: Span[mut=m, Int,
+  o]` or a bare struct's auto-parameterized `mut`. Nor does it bind them
+  through the argument's conversion: `g["abc"]()` over `g[c:
+  StringSpan]()` is a type mismatch. Pass the view itself, `g[StringSpan(
+  "abc")]()` (formerly R2662, R2663).
+- A compile-time expression reading an origin's `mut=` binder (`comptime
+  for i in range(Int(m) + 1)` over `o: Origin[mut=m]`) is "parameter
+  constant names parameter `m` … that no enclosing declaration binds"
+  (formerly R2664). R2666 shares the cause for the implicit `mut=` binders
+  the library reads. If fixing it makes this shape run, the shape leaves
+  this list.
+- Reopen a shape when a library or user program the corpus needs
+  spells it, and only then. Its fix must not reach any other shape.
 
 ### Native SIMD: signed-zero min/max is unspecified
 

@@ -171,7 +171,7 @@ struct _TakeDictEntryIter[
         view_mut: Bool, //, view_origin: Origin[mut=view_mut]
     ] = Self
 
-    var src: ref[origin] Dict[Self.K, Self.V, Self.H]
+    var src: Pointer[Dict[Self.K, Self.V, Self.H], Self.origin]
 
     @inline(.always)
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
@@ -179,10 +179,10 @@ struct _TakeDictEntryIter[
 
     @inline(.always)
     def __next__(mut self) raises StopIteration -> DictEntry[Self.K, Self.V, Self.H]:
-        if len(self.src.entries) == 0:
+        if len(self.src[].entries) == 0:
             raise StopIteration()
-        var entry = self.src.entries.pop(0)
-        self.src._reindex()
+        var entry = self.src[].entries.pop(0)
+        self.src[]._reindex()
         return entry^
 
 @explicit_destroy(
@@ -366,8 +366,7 @@ struct Dict[
     def take_items(mut self) -> Self.TakeIterType[origin_of(self)] where conforms_to(
         Self.K, Deinitable
     ) and conforms_to(Self.V, Deinitable):
-        ref source = self
-        return _TakeDictEntryIter[Self.K, Self.V, Self.H](source)
+        return _TakeDictEntryIter[Self.K, Self.V, Self.H](Pointer(to=self))
 
     # Remove the entry for `key` and return its value; the discarded key
     # needs `Deinitable`. Missing keys raise (`pop(key, default)` instead

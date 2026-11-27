@@ -104,77 +104,6 @@ fn dead_pointer_releases_its_owner_loan() {
 }
 
 #[test]
-fn reference_aggregate_extends_the_owner_loan() {
-    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Int\n\ndef main():\n    var value = 40\n    ref alias = value\n    var box = RefBox(alias)\n    value += 1\n    print(box.value)\n";
-    assert!(matches!(
-        own_linked(src),
-        Err(OwnershipError::LoanConflict { .. })
-    ));
-}
-
-#[test]
-fn reference_aggregate_preserves_every_field_loan() {
-    let src = "@fieldwise_init\nstruct RefPair[a: Origin[mut=True], b: Origin[mut=True]]:\n    var first: ref[a] Int\n    var second: ref[b] Int\n\ndef main():\n    var x = 10\n    var y = 20\n    ref rx = x\n    ref ry = y\n    var pair = RefPair(rx, ry)\n    y += 1\n    print(pair.second)\n";
-    assert!(matches!(
-        own_linked(src),
-        Err(OwnershipError::LoanConflict { .. })
-    ));
-}
-
-#[test]
-fn moving_reference_aggregate_transfers_its_owner_loan() {
-    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Int\n\ndef main():\n    var value = 40\n    ref alias = value\n    var box = RefBox(alias)\n    var moved = box^\n    value += 1\n    print(moved.value)\n";
-    assert!(matches!(
-        own_linked(src),
-        Err(OwnershipError::LoanConflict { .. })
-    ));
-}
-
-#[test]
-fn rebinding_reference_aggregate_replaces_its_owner_generation() {
-    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Int\n\ndef main():\n    var x = 1\n    var y = 10\n    ref rx = x\n    ref ry = y\n    var box: RefBox[MutUnsafeAnyOrigin] = RefBox(rx)\n    print(box.value)\n    box = RefBox(ry)\n    x = 2\n    print(box.value)\n";
-    assert!(own(src).is_ok());
-}
-
-#[test]
-fn ref_field_reborrow_read_is_not_a_self_conflict() {
-    // A parametric-origin receiver is not provably mutable, so reads through a
-    // `ref s = self.src` reborrow classify as immutable accesses and do not
-    // conflict with the reborrow's own loan.
-    let src = "@fieldwise_init\nstruct View[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n\n    def first(self) -> Int:\n        ref s = self.src\n        return s[0]\n\ndef main():\n    var data: List[Int] = [9]\n    ref r = data\n    var v = View(r)\n    print(v.first())\n";
-    assert!(own(src).is_ok(), "{:?}", own(src));
-}
-
-#[test]
-fn ref_field_ctor_argument_from_ref_field_tracks_in_the_receiver_domain() {
-    // Constructing one ref-field struct from another struct's ref FIELD loans
-    // through the receiver; the analysis accepts the construction while still
-    // rejecting mutation of the ultimate owner during the view's lifetime.
-    let ok = "@fieldwise_init\nstruct View[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    var index: Int\n\n    def first(self) -> Int:\n        return self.src[0]\n\n@fieldwise_init\nstruct Outer[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n\n    def peek(self) -> Int:\n        var v = View(self.src, 0)\n        return v.first()\n\ndef main():\n    var data: List[Int] = [7]\n    ref r = data\n    var outer = Outer(r)\n    print(outer.peek())\n";
-    assert!(own(ok).is_ok(), "{:?}", own(ok));
-
-    let conflict = "@fieldwise_init\nstruct Outer[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n\n    def first(self) -> Int:\n        return self.src[0]\n\ndef main():\n    var data: List[Int] = [7]\n    ref r = data\n    var outer = Outer(r)\n    data.append(9)\n    print(outer.first())\n";
-    assert!(matches!(
-        own(conflict),
-        Err(OwnershipError::LoanConflict { .. })
-    ));
-}
-
-#[test]
-fn ref_field_ctor_argument_from_owned_place_loans_the_source() {
-    // A bare owned place auto-borrows into a ref ctor parameter, installing
-    // the same source loan an explicit `ref` binding would.
-    let ok = "@fieldwise_init\nstruct View[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    var index: Int\n\n    def first(self) -> Int:\n        return self.src[0]\n\ndef main():\n    var data: List[Int] = [7]\n    var v = View(data, 0)\n    print(v.first())\n";
-    assert!(own(ok).is_ok(), "{:?}", own(ok));
-
-    let conflict = "@fieldwise_init\nstruct View[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    var index: Int\n\n    def first(self) -> Int:\n        return self.src[0]\n\ndef main():\n    var data: List[Int] = [7]\n    var v = View(data, 0)\n    data.append(9)\n    print(v.first())\n";
-    assert!(matches!(
-        own(conflict),
-        Err(OwnershipError::LoanConflict { .. })
-    ));
-}
-
-#[test]
 fn variant_payload_reference_is_invalidated_when_the_tag_changes() {
     // The payload reference names `origin_of(value)._get_owned_interior[
     // "value"]`, as upstream's `__getitem_param__` declares, so the `mut self`
@@ -297,40 +226,6 @@ fn pointer_whole_replacement_invalidates_referent_interiors() {
         own(src),
         Err(OwnershipError::InvalidatedInteriorReference { .. })
     ));
-}
-
-#[test]
-fn reference_field_write_invalidates_the_referents_interiors() {
-    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef main():\n    var values: List[Int] = [1, 2]\n    ref whole = values\n    var box = RefBox(whole)\n    ref first = box.value[0]\n    box.value = [3, 4]\n    print(first)\n";
-    assert!(matches!(
-        own(src),
-        Err(OwnershipError::InvalidatedInteriorReference { .. })
-    ));
-}
-
-#[test]
-fn reference_field_write_is_field_sensitive() {
-    let distinct = "@fieldwise_init\nstruct RefPair[left_origin: Origin[mut=True], right_origin: Origin[mut=True]]:\n    var left: ref[left_origin] List[Int]\n    var right: ref[right_origin] List[Int]\n\ndef main():\n    var left: List[Int] = [1, 2]\n    var right: List[Int] = [3, 4]\n    ref left_ref = left\n    ref right_ref = right\n    var pair = RefPair(left_ref, right_ref)\n    ref right_element = pair.right[0]\n    pair.left = [5, 6]\n    print(right_element)\n";
-    assert!(own(distinct).is_ok());
-
-    let same = "@fieldwise_init\nstruct RefPair[left_origin: Origin[mut=True], right_origin: Origin[mut=True]]:\n    var left: ref[left_origin] List[Int]\n    var right: ref[right_origin] List[Int]\n\ndef main():\n    var left: List[Int] = [1, 2]\n    var right: List[Int] = [3, 4]\n    ref left_ref = left\n    ref right_ref = right\n    var pair = RefPair(left_ref, right_ref)\n    ref right_element = pair.right[0]\n    pair.right = [5, 6]\n    print(right_element)\n";
-    assert!(matches!(
-        own(same),
-        Err(OwnershipError::InvalidatedInteriorReference { .. })
-    ));
-}
-
-#[test]
-fn handwritten_reference_fields_keep_their_referent_identity() {
-    let src = "struct RefPair[left_origin: Origin[mut=True], right_origin: Origin[mut=True]]:\n    var left: ref[left_origin] List[Int]\n    var right: ref[right_origin] List[Int]\n    def __init__(out self, ref[Self.left_origin] left: List[Int], ref[Self.right_origin] right: List[Int]):\n        self.left = left\n        self.right = right\n\ndef main():\n    var left: List[Int] = [1, 2]\n    var right: List[Int] = [3, 4]\n    var pair = RefPair(left, right)\n    ref right_element = pair.right[0]\n    pair.right = [5, 6]\n    print(right_element)\n";
-    let result = own(src);
-    assert!(
-        matches!(
-            result,
-            Err(OwnershipError::InvalidatedInteriorReference { .. })
-        ),
-        "{result:?}"
-    );
 }
 
 #[test]
@@ -932,39 +827,6 @@ fn mut_parameter_transferred_away_must_be_written_back() {
 fn use_after_move_through_a_method_call() {
     let src = "@fieldwise_init\nstruct Thing:\n    var x: Int\n    def get(self) -> Int:\n        return self.x\n\ndef main():\n    var a: Thing = Thing(1)\n    var b: Thing = a^\n    print(a.get())\n";
     assert!(matches!(own(src), Err(OwnershipError::UseAfterMove { .. })));
-}
-
-#[test]
-fn immutable_yield_iteration_still_conflicts_with_source_mutation() {
-    // The immutable-origin cast changes only the yielded capability; the
-    // iterator's source loan is unchanged, so structural mutation during
-    // iteration still conflicts (generation protection is loan-based, not
-    // mutability-based).
-    let src = "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct NumbersIter[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    var index: Int\n    def __next__(mut self) raises StopIteration -> ref[ImmOrigin(Self.o)] Int:\n        if self.index >= len(self.src):\n            raise StopIteration()\n        var r = self.index\n        self.index += 1\n        return self.src[r]\n\nstruct Numbers:\n    var items: List[Int]\n    def __init__(out self):\n        self.items = [4, 5, 6]\n    def __iter__(ref self) -> NumbersIter[origin_of(self.items)]:\n        ref items = self.items\n        return NumbersIter(items, 0)\n\ndef main():\n    var nums = Numbers()\n    for ref x in nums:\n        nums.items.append(7)\n        print(x)\n";
-    assert!(matches!(
-        own_linked(src),
-        Err(OwnershipError::LoanConflict { .. })
-    ));
-}
-
-#[test]
-fn nested_call_transferred_loans_conflict_with_source_mutation() {
-    // A nested `def` is called directly, as a free function is; the call
-    // site installs the callee's transferred loan on the carrier, so
-    // mutating the loan source afterward conflicts exactly like the
-    // free-call path. (The unlinked seam records through the user-struct
-    // store; the seeded `List.append` chain is covered by the linked tests.)
-    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Carrier[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var carrier = Carrier(RefBox(whole))\n    var local: List[Int] = [9]\n    ref alias = local\n    def stash(mut c: Carrier, var box: RefBox):\n        c.slot = box^\n    stash(carrier, RefBox(alias))\n    local.append(1)\n    print(carrier.slot.value[0])\n";
-    assert!(matches!(own(src), Err(OwnershipError::LoanConflict { .. })));
-}
-
-#[test]
-fn transferred_carrier_loans_keep_the_source_alive() {
-    // The appended carrier's loan lands on the collection, so the drops pass
-    // keeps the borrowed source alive while the collection lives — the
-    // chained read executes without explicit source liveness.
-    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef main():\n    var sink = List[RefBox]()\n    var local: List[Int] = [9]\n    ref alias = local\n    sink.append(RefBox(alias))\n    print(sink[0].value[0])\n";
-    assert!(own(src).is_ok());
 }
 
 #[test]

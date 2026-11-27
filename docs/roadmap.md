@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2667**.
+Next free ID: **R2669**.
 
 ## Ordered Work
 
@@ -61,36 +61,6 @@ callee with the complete parameter application, which it substitutes.
 R2625–R2640 stage that, in
 [`docs/call-application-plan.md`](call-application-plan.md), one entry per
 slice.
-
-- [ ] **R2645 A struct's or method's origin binder whose type names a raw
-  sibling is rejected at its declaration**
-
-  `struct Holder[o: O]` and a method `peek[o: O](ref[o] self)` over
-  `comptime O = Origin`, and their spelled `o: Origin[mut=m,
-  _mlir_origin=r]` forms, fail with "type mismatch for value passed to
-  '_mlir_origin' of 'Origin': expected LITOrigin[mut], found Origin",
-  where the pin runs them (`5`, and `True False`).
-  - Cause: `check_origin_argument_representation`'s
-    `origin_argument_is_raw` (`checker/type_resolution.rs`) finds `r` raw
-    only through `callable_type_params` or `enclosing_type_params`, and
-    neither holds the list while `classify_params_in_scope` classifies a
-    struct's or a method's binders. A free `def` takes the same path, but
-    there the error is swallowed.
-  - Lever: read the sibling's rawness from the decls classified so far.
-  - Then apply R2637's rule (`ParamDecl::raw_origin_source`: the raw
-    binder takes the origin of the sibling naming it) at the struct-side
-    sites: `constructed_type`, `own_origin_mutabilities`,
-    `own_mutability_values`, `place_struct_origins`, and
-    `deferred_mutability_value` (`checker/origins/construct.rs`),
-    `ParamDecl::place_origins_with`'s governed lookup
-    (`mojito-types/types.rs`), and `bind_alias_origin_placeholders`
-    (`checker/type_resolution.rs`).
-  - Probe: `var h = Holder(Pointer(to=n)); print(h.p[])` prints `5` at
-    the pin.
-  - Probe: `s.peek()` and `S(2).peek()` returning `o.mut` print `True`
-    and `False` at the pin.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R2640 A call's type argument nests a placeholder**
 
@@ -136,54 +106,11 @@ slice.
   - Probe: `assets/ok/string_span_literal.mojo` (`StringSpan.__ne__`'s
     `$mut_rhs`).
   - Present at R2376's landing commit (028c53067), before R2639.
+  - A user `comptime` expression reading an origin's `mut=` binder fails
+    the same way at check time, and stays rejected (`docs/non-goals.md`,
+    "Rare origin-binder shapes stay rejected"). Fix the library's implicit
+    binders, not that shape.
   - Found while landing R2639 (2026-11-27).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2641 A function alias's value or type hole is no generator over
-  it**
-
-  `comptime f = first[_, 6]` over `def first[n: Int, m: Int](x: Int)`,
-  then `f[1](2)`, fails with "cannot infer type parameter 'n' of 'first'
-  from the arguments", where the pin's partially bound symbol is a
-  generator over `n` and prints `9`.
-  - Cause: `bind_generic_callable_value` and
-    `specialize_callable_value_candidate` (`checker/generics.rs`) collect
-    only `ParamDecl::Origin` decls as the value's open generator list, so a
-    `_` over a type or value binder leaves nothing for the call to bind.
-  - Lever: the value's generator declares every binder the bracket left
-    `_`, as upstream's `#kgen.func.symbol` leaves each one unbound, with
-    each binder's own infer-only `mut=` or type binders beside it.
-  - Probe: the shape above.
-  - Probe: `f(2)` over `comptime f = first[_, 6]` and `def first[T:
-    Intable, n: Int](x: T)`; the pin prints `8`.
-  - Probe: `comptime b = a[_, 3]` over `comptime a = pair[_, 10, _]` and
-    `def pair[o: ImmOrigin, n: Int, m: Int](p: Pointer[Int, o])`, then
-    `b(Pointer(to=y))` with `y = 2`; the pin prints `23`.
-  - Probe: an origin hole whose binder has an infer-only `mut=` binder,
-    `first[_, 6]` over `first[m: Bool, //, o: Origin[mut=m], n: Int](p:
-    Pointer[Int, o])`, reports "'first[m, _, 6]' is not a compile-time
-    constant here", where the pin prints `8`; the generator must declare
-    `m` beside `o`.
-  - Found while landing R2636 (2026-11-26).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2642 A call through a local `comptime` function alias calls its
-  slot**
-
-  `comptime g = first[_, 6]` inside `main`, then `g(Pointer(to=y))`,
-  lowers to a `call.indirect` of a stored `function_instance first
-  [origin_unbound, 6]`, where upstream folds a call of a compile-time
-  constant into a direct call at any scope.
-  - Cause: `infer_call`'s `binding_scope(name) == Some(0)` filter
-    (`checker/call_inference.rs`) folds only a module constant's call, so
-    a local one records no callee application at all.
-  - A bare local alias (`comptime g = first`) already folds.
-  - Probe: the shape above prints `8` on both, but its `emit-mir` shows
-    the indirect call.
-  - Related: R2153 (a struct member holding a function).
-  - Found while landing R2636 (2026-11-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -1690,23 +1617,6 @@ Track: `ownership`.
 
 Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
-- [ ] **R2379 A subscript through a `ref` field read off a collection
-  element passes the VM a value where it wants a reference**
-
-  `print(sink[0].value[0])` over `struct RefBox[origin:
-  Origin[mut=True]]` holding `var value: ref[origin] List[Int]`, with
-  `sink: List[RefBox[origin_of(view)]]`, fails with "vm: the mut/ref
-  argument 0 to 'List$mono$TInt.__getitem__$ov$Int' must be a
-  reference", where the extension fixtures expect the element.
-  - The ref field's stored handle is not chased before the
-    `__getitem__` receiver is passed.
-  - Probe: `assets/extensions/ok/reference_element_chained_read.mojo`.
-  - Probe: `assets/extensions/ok/transferred_carrier_keeps_source_alive.mojo`.
-  - Found while landing R2370 (2026-11-19); both already fail at
-    `3a322a838`.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2094 A loan named only inside a type argument does not follow a
   move or copy of its holder**
 
@@ -2079,16 +1989,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Reading `t[0]` without a transform prints.
   - Depends on nothing.
   - Model: Fable, Planned.
-
-- [ ] **R535 A `ref` field of a list element prints its handle inside `print`**
-
-  Problem: over `l = [RefOne(a)]`, where `RefOne` holds `var value: ref[o] Int`, `print(l[0].value)` prints `<ref 1:0>` instead of `4`.
-  - The same happens for a `ref` field of a `Tuple` field's element.
-  - `var z = l[0].value` binds, but `print(z)` then prints `None`.
-  - Inside the kept direct-`ref`-field extension, so its fixture goes under `assets/extensions/ok/`.
-  - Found while planning R529 (2026-10-09).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1295 A partly built `self` dies as one value, where upstream
   tracks each of its fields**
@@ -2836,6 +2736,13 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - A `ref[o]` result over a receiver-bound `o` (`def first[o:
     Origin](ref[o] self) -> ref[o] Self: return self`) borrows the
     receiver since R2412; the probes above remain.
+  - Probe: the bundled `List`, `Array`, and `Optional` `__iter__(ref self)`
+    and `List.__reversed__` build their iterator's source as
+    `Pointer(to=self).unsafe_origin_cast[origin_of(self)]()`, as `Dict` and
+    `Set` do. A bare `Pointer(to=self)`, upstream's spelling, types the
+    iterator `mut=False` on a `var` receiver, and
+    `assets/ok/iterator_bounds.mojo` then fails MIR verification. Drop the
+    casts once this lands.
   - Once it lands, the bundled `OwnedPointer.ptr`/`unsafe_ptr` (`ref[origin]
     self`), `OwnedPointer.__getitem__` (`ref[AddressSpace.GENERIC] self`),
     and upstream's `Array.unsafe_ptr` (`ref[origin, address_space] self`)
@@ -2863,7 +2770,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     is "type mismatch for field 1 of 'BoxIter'", where the pin iterates.
   - R2516 makes every bare `ref` parameter a `ref[o]` one. A prototype then
     failed six `assets/ok` fixtures here, among them
-    `forward_struct_reference_iterator`,
     `pointer_field_fieldwise_init_binder`, `pointer_field_view_returned`,
     and `template_method_for_loop`.
   - Found while landing R743 (2026-10-23).
@@ -5295,26 +5201,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     package build.
   - Probe: `Int(Scalar[DType.int64](a.get[0]()))` alone takes 0.3 s.
   - Found while landing R1674 (2026-10-31).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2661 A construction's solve of its struct's parameters reads no
-  initializer default**
-
-  `S()` over `struct S[o: ImmOrigin]` with `def __init__(out self, s:
-  StringSpan[Self.o] = StaticString("init"))` is rejected at the
-  declaration ("type mismatch for default value of method parameter 's'"),
-  where the pin binds `o` to the default's static origin and prints
-  `init`, then `q` for `S(StaticString("q"))`.
-  - The default check solves only the method's own binders
-    (`check_method_defaults`, `checker/declarations.rs`). An initializer's
-    default also solves the struct's binders a construction infers.
-  - Neither construction solve in `infer_construction_ranked` (the
-    single-signature fast path and the general one) adds an omitted
-    argument's solved default type to `constructed_unification`, as
-    `infer_generic_call` and `instantiate_method_generics` do
-    (`MethodSig::default_solves`).
-  - Found while landing R1926 (2026-11-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9274,8 +9160,8 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - The member's parameters never reach `View`, so the return type is
     the unbound `View` and the returned `View[origin_of(self.items)]`
     passes. Spelled `-> View[origin_of(self)]` directly, or through `=
-    View[o]`, the same return is rejected as at the pin, for a `ref`-field
-    `View` and its `Pointer`-field twin alike
+    View[o]`, the same return is rejected as at the pin, for a
+    `Pointer`-field `View`
     (`assets/type_error/return_origin_widening_field_view.mojo`).
   - The member is resolved by `resolve_parameterized_member`
     (`checker/type_resolution.rs`), which should reject a body naming a
@@ -9283,13 +9169,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
     application already stops (on its origin parameter).
   - Probe: the `Pointer`-field `View` of the fixture above, returned through
     `comptime ViewType[m: Bool, //, o: Origin[mut=m]] = View`, prints `7`.
-  - Five `assets/extensions/ok` fixtures return through such a member and
-    widen: `ref_field_view_for_temporary.mojo`,
-    `ref_field_view_ref_yield.mojo`, `ref_field_view_method_return.mojo`,
-    `ref_field_drain_mut_method.mojo`, and
-    `ref_field_chained_view_call.mojo`. Respell each member `= View[o]`
-    and each return over the field's own origin.
-  - Ledger name: `ref-field-return-origin-widening`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9752,43 +9631,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Probe: the call above.
   - R2383 (an explicitly supplied one is rejected in the wrong words)
     shares the cause.
-  - Found while landing R2439 (2026-11-26).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2648 An origin binder cannot declare a default**
-
-  `def f[o: ImmOrigin = ImmutAnyOrigin]() -> Int` is rejected at its
-  declaration ("unsupported feature: a default for origin parameter
-  'o'"), where the pin binds `o` to the default when `f()` infers none.
-  - Cause: `ParamDecl::Origin` (`mojito-types/src/types.rs`) has no
-    default, so `origin_binder_decl` (`checker/declarations.rs`) refuses
-    one rather than drop it.
-  - Lever: carry the default origin on the binder, bind it where the call
-    infers none, and count it bound in `uninferred_origin_parameter`.
-  - Probe: the declaration above, called as `f()`.
-  - Found while landing R2439 (2026-11-26).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2649 A static call never binds its struct's origin binders from
-  its arguments**
-
-  `V.mk(Pointer(to=y))` over `struct V[o: ImmOrigin]` with `@staticmethod
-  def mk(p: Pointer[Int, Self.o]) -> Int` is rejected ("invalid call to
-  'V.mk': no overload matches the supplied arguments"), where the pin
-  binds `o` from `p` and prints `5`.
-  - Cause: `static_struct_arguments` (`method_calls/statics.rs`) solves
-    only the struct's argument binders (`resolve_explicit_use_params`),
-    so an origin binder the application leaves open stays unbound and
-    the argument fails to convert.
-  - A `ref [Self.o]` argument already binds it
-    (`assets/ok/static_call_origin_application.mojo`).
-  - Lever: bind the open struct origin binders from the arguments'
-    places, as `bind_callee_origins` does a callee's own.
-  - Probe: the call above.
-  - Probe: `W[Int].mk(Pointer(to=y))` over `struct W[T: AnyType, o:
-    ImmOrigin]` with the same static fails the same way.
   - Found while landing R2439 (2026-11-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -10629,46 +10471,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2181.
   - Model: Fable, Not Planned.
 
-- [ ] **R2183 `sroa` keeps a struct with a `ref` field whole, where
-  upstream's `SROA` splits it**
-
-  A place past a split `ref` field's slot would need `through: Some(slot)`
-  and a `ref` root type, where the rewrite leaves `through: absent`, which
-  Pliron reads as the referent itself.
-  - Probe: splitting it makes
-    `assets/extensions/ok/ref_field_written_nodebug_init.mojo` SIGSEGV
-    natively.
-  - Probe (from R1350): `print(outer(4))` and `print(bumped(4))`, over
-    `var y = x` with `@always_inline("nodebug") def get() {imm y}` and
-    `var c = x` with `bump() {mut c}`, keep `y` and `c` in memory: the
-    closure storage's `ref` field stays whole and its `place.store_ref`
-    takes the slot's address. The pin promotes both, and `main` folds to
-    `print(5)` and `print(10)`.
-  - Splitting the field leaves a `ref` slot whose `place.store_ref` and
-    `through` reads `mem-2-reg` must forward.
-  - Depends on R2182.
-  - Model: Fable, Not Planned.
-
-- [ ] **R2184 A one-field register-passable struct of a `ref` field
-  stays boxed in the VM, because a held `{mut n}` closure storage loses
-  its write through a `__call__` witness call**
-
-  The pin holds such a struct as its reference; `build_structs`
-  (`crates/mojito-vm/src/backend/vm.rs`) keeps it boxed by a filter on
-  `declares_ref_field`.
-  - A parameter's slot is now an address only where its convention passes
-    it by address (`mir::address_parameters`), so a held struct passed to
-    a register-passable `read` parameter reads as its value.
-  - Probe: dropping the filter fails only
-    `assets/ok/closure_witness_forwards_owned_argument.mojo`, whose final
-    `print(n)` prints 2, not 3: the `{mut n}` closure `h` passed to
-    `apply[F: def(var x: M) -> None]` loses `n += 1` through the
-    `__call__` witness.
-  - Fix: make a held closure storage of one `ref` capture keep its write
-    through the witness call, then drop the filter.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1308 An inlined initializer's `out self` is a slot of its own the
   caller forwards, where upstream binds the caller's destination**
 
@@ -10714,7 +10516,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `try` handler no raise reaches. Since R1326 that read is a
     `place.load` of the handler's error slot, which `drop.var` ends, so
     the handlers of `pliron_reference_write_back`,
-    `copyable_iterator_reference_aggregate`,
     `read_temporary_conditional_argument_drop`,
     `try_finally_raise_skips_own_handler`, and
     `try_region_shadowed_binding` hold no owned register (2026-10-26), and
@@ -11885,65 +11686,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R2517 (2026-11-27).
   - Depends on nothing.
   - Model: Opus, Planned.
-
-- [ ] **R2662 A compile-time parameter's type spelling its struct's
-  `mut=` slot reads the struct's own `mut`, where upstream reads the
-  binder it names**
-
-  `c.mut` in `def outer[m: Bool, o: Origin[mut=m], //, c: Span[mut=m,
-  Int, o]]` fails ("'mut' is not a compile-time constant here"), where
-  the pin prints `False` for `outer[Span(xs)]` over a compile-time list.
-  - The same spelling on a run-time parameter (`s: Span[mut=m, Int,
-    o]`) reads `m`. The compile-time parameter's declared type keeps the
-    slot as `Span`'s own deferred `mut`.
-  - Auto-parameterization spells a bare struct's unbound `mut` this way
-    (`S[$T_c, $origin_c, mut=$mut_c]`), so `def f[c: S]()` called as
-    `f[S[Int, ImmStaticOrigin]()]()` fails ("failed to infer parameter
-    'mut'"), where the pin prints the field it reads.
-  - Probe: `inner[c](x)` inside that `outer`, over `inner` declared
-    alike, stops at elaboration ("cannot resolve parameter `m`"); the pin
-    prints the sum.
-  - Found while landing R2376 (2026-11-27).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2663 A compile-time argument solves no origin binder through
-  its conversion to the parameter's type**
-
-  `g["abc"]()` over `def g[c: StringSpan]() -> Int` is rejected ("type
-  mismatch for value parameter 'c'"), where the pin prints `3`.
-  - `Checker::bracket_origin_places` (`checker/declarations.rs`) lends
-    the argument's own type to the call's origin solve, so a literal or
-    a `List` converting to a view binds nothing. A run-time argument
-    solves through its conversion (`view_conversion_actual`,
-    `checker/call_inference.rs`, R2656 and R2657).
-  - Lever: lend the converting argument's constructed instance, as
-    `reference_solve_pair` does for a run-time one.
-  - Probe: `f[[Float64(1.0), 2.0]]()` over `def f[c: Span[Float64,
-    _]]()` prints `2` at the pin. R52 owns the same shape's type binder.
-  - Found while landing R2376 (2026-11-27).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2664 A compile-time expression that reads an origin's `mut=`
-  binder lifts a function over no binder for it**
-
-  `comptime for i in range(Int(m) + 1)` in `def show2[m: Bool, o:
-  Origin[mut=m], //](s: Span[Int, o])` fails ("parameter constant names
-  parameter `m` of `show2` that no enclosing declaration binds"), where
-  the pin prints `0 1` for a mutable span.
-  - A lifted function is applied to its declaration's argument binders
-    (`binders_in_scope`, `checker/comptime_validation.rs`), as a call
-    is, and an origin's `mut=` binder is no argument binder
-    (`ParamDecl::is_argument_binder`), so MIR declares none for it.
-  - Lever: apply the lifted function to the `mut=` binders it reads as
-    ordinary `Bool` binders of its own list, and have the inliner and the
-    elaborator bind them from the caller's instance.
-  - Probe: `range(values.__len__() + Int(m))` over a pack beside that
-    pair fails alike; the pin prints `0 1 2 3` for three values.
-  - Found while landing R2376 (2026-11-27).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R2659 A spelled origin argument counts as supplied to a
   construction whatever it resolved to**
@@ -13397,11 +13139,64 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1946.
   - Model: Opus, Not Planned.
 
+- [ ] **R2667 Closure capture storage declares `ref` fields, the last
+  producer of the `ref`-field machinery**
+
+  The parser rejects a user `ref` field since 2026-11-27, as the pin does
+  (`docs/non-goals.md`). The checker still synthesizes one for each `mut`,
+  `ref`, or by-reference `imm` capture of a closure's storage struct
+  (`checker/statements.rs`, the `StructInfo` it inserts with `ref_fields`).
+  So the declared-`ref` path through the checker, MIR, ownership analysis,
+  the VM, and Pliron stays alive for closures alone.
+  - Lever: hold each by-reference capture the way upstream's closure
+    context holds it. Read upstream's closure lowering first (`Mojo/lib`,
+    the capture-list and `lit.closure` sources): Mojito already treats a
+    `!lit.ref`-typed field as a value (`docs/features.md`, R2490), and a
+    typed reference value may be the shape. Do not guess the shape.
+  - Probe (formerly R2184): `assets/ok/closure_witness_forwards_owned_argument.mojo`
+    prints `n` as `3`. The VM's `build_structs` keeps a one-field struct of
+    a `ref` field boxed (`declares_ref_field`). Dropping that filter made it
+    print `2`, since the `{mut n}` closure passed to `apply[F: def(var x: M)
+    -> None]` lost `n += 1` through its `__call__` witness. The pin holds
+    such a struct as its reference.
+  - Probe (formerly R2183): `print(outer(4))` and `print(bumped(4))`, over
+    `var y = x` with `@always_inline("nodebug") def get() {imm y}` and `var
+    c = x` with `bump() {mut c}`, keep `y` and `c` in memory, because `sroa`
+    keeps the storage's `ref` field whole and its `place.store_ref` takes
+    the slot's address. The pin promotes both, and `main` folds to
+    `print(5)` and `print(10)`. Splitting needs R2182's places past a split
+    slot.
+  - Acceptance: no checker site produces a non-empty `ref_fields`, and the
+    `lambda_*` and `closure_*` fixtures under `assets/ok` print as before.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R2668 The `ref`-field machinery outlives its last producer**
+
+  Once closure storage declares no `ref` field (R2667), nothing does, but
+  the facts and paths for one remain.
+  - Delete the facts first, so the build lists every reader:
+    `StructInfo::ref_fields` (`checker.rs`), `ref_fields` and the field's
+    `reference` in `mojito-checked/src/declaration.rs`,
+    `MirStructDeclaration::ref_fields` (and its MIR text field, with a
+    schema bump), `MirDeclarations::declares_ref_field`,
+    `Flatten::declares_ref_field`, and `OwnRefFields` (`mir.rs`).
+  - Then delete each reader's `ref`-field branch: the VM's
+    `StoredHandle` (`vm/references.rs`) and `build_structs` filter, the
+    `ref.read` and `ref.write` lowering of a field read and write
+    (`docs/architecture.md`, "a `ref` field"), the interior-origin
+    branch (`checker/origins/interior.rs`), and the parser's
+    `Param::reference` for a field.
+  - Update `docs/architecture.md`'s `ref`-field passages and
+    `docs/symbol-map.md` with the deletion.
+  - Depends on R2667.
+  - Model: Opus, Planned.
+
 - [ ] **R538 Storage paths for reference-valued elements outlive the last spelling of one**
 
   Problem: the checker, MIR, VM, and native backend keep paths for an element whose type is itself `ref[o] T`, though `List[ref[o] T]` and `Tuple[ref[o] T]` are now rejected at parse, as at the pin.
   - Sites: `infer_list_construction` and the `Tuple` arm of `infer_storage_value` in the checker, the element-slot comments in `crates/mojito-mir/src/mir/lower_stmt.rs` and `mir/verify/instr.rs`, `MirInstr`'s element-handle note in `mir.rs`, and `lower_make_ref` in `crates/mojito-pliron/src/lower/ctors.rs`.
-  - Most of these also serve a struct with a direct `ref` field as an element, so delete only a branch whose sole trigger is a top-level reference element.
+  - Some of these also serve closure capture storage's `ref` fields, the last struct that declares one (R2667). Delete only a branch whose sole trigger is a top-level reference element, and the rest with R2668.
   - A bare `List[ref Int]` is a parse error too since R2537, so no source spelling forms a `Ty::Ref` element type.
   - Probe: the checker's element peels over an aggregate element type (`indexing.rs`'s element arms, `infer_reference_value`'s `Index` arm, `statements.rs`'s element read) fire on no corpus fixture. Once `!lit.ref` merges into `TyKind::Ref` (R2511) they would read through a `!lit.ref` alias element.
   - Depends on nothing.

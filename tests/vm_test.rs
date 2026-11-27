@@ -244,17 +244,6 @@ fn value_iteration_ref_target_cannot_transfer_the_yielded_item() {
 }
 
 #[test]
-fn reference_iteration_binding_modes_borrow_or_copy_the_referent() {
-    // A reference-yielding iterator: the plain and `ref` targets borrow the
-    // referent through the retained handle; a `var` target copies it into owned
-    // storage, leaving the source untouched.
-    let output = vm(include_str!(
-        "../conformance/fixtures/reference_iteration_binding_modes.mojo"
-    ));
-    assert_eq!(output, "imm 1\nvar 102\nsrc 2\nref 3\n");
-}
-
-#[test]
 fn string_concat_and_builtins() {
     assert_eq!(
         parity(
@@ -888,12 +877,6 @@ fn structured_reference_calls_cross_try_boundaries() {
 }
 
 #[test]
-fn structured_reference_call_rebases_reference_bearing_aggregate_returns() {
-    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Int\n\ndef wrap[origin: Origin[mut=True]](\n    ref[origin] item: Int\n) -> RefBox[origin]:\n    return RefBox(item)\n\ndef main():\n    var value = 40\n    try:\n        var box = wrap(value)\n        box.value += 2\n    except error:\n        print(error)\n    print(value)\n";
-    assert_eq!(vm(src), "42\n");
-}
-
-#[test]
 fn structured_reference_call_handwritten_constructors_use_caller_places() {
     let src = "struct Snapshot:\n    var value: Int\n\n    def __init__(out self, ref source: Int):\n        self.value = source\n\nstruct Bump:\n    var seen: Int\n\n    def __init__(out self, mut source: Int, fail: Bool) raises:\n        source += 1\n        self.seen = source\n        if fail:\n            raise Error(\"failed\")\n\ndef main():\n    var source = 40\n    try:\n        var snapshot = Snapshot(source=source)\n        print(snapshot.value)\n    except error:\n        print(error)\n\n    var changed = 40\n    try:\n        var bump = Bump(source=changed, fail=False)\n        print(bump.seen)\n    except error:\n        print(error)\n    print(changed)\n\n    try:\n        var unused = Bump(source=changed, fail=True)\n    except error:\n        print(\"caught\")\n    print(changed)\n";
     assert_eq!(vm(src), "40\n41\n41\ncaught\n42\n");
@@ -1183,30 +1166,6 @@ fn set_reference_iteration_write_through_is_rejected() {
     let source = "from std.collections.set import Set\n\ndef main():\n    var s: Set[Int] = {1, 2}\n    for ref x in s:\n        x += 10\n";
     let error = run_compiled(source).expect_err("set element write-through must be rejected");
     assert!(error.contains("must be mutable"), "got {error}");
-}
-
-#[test]
-fn parametric_mut_iterator_writes_through_a_mutable_source() {
-    // The loop site resolves `Mutability::Param` from the source: a mutable
-    // named source yields mutable references, `for ref x: x += 10` lands in
-    // the source, and the comprehension path resolves the same way.
-    let source =
-        include_str!("../assets/extensions/ok/reference_yielding_iteration_parametric_mut.mojo");
-    assert_eq!(
-        run_compiled(source).expect("parametric-mut iterator writes through"),
-        "45\n28 32\n"
-    );
-}
-
-#[test]
-fn parametric_mut_iterator_reads_through_the_immutable_fallback() {
-    // A parametric-mut origin iterator (`m: Bool, //, o: Origin[mut=m]`) over
-    // a read-only loop: the unresolved `Mutability::Param` binds immutably.
-    let source = include_str!("../assets/extensions/ok/parametric_mut_iterator_read.mojo");
-    assert_eq!(
-        run_compiled(source).expect("parametric-mut iterator reads"),
-        "15\n"
-    );
 }
 
 #[test]
@@ -1625,24 +1584,6 @@ fn pointer_aggregate_derefs_through_the_stored_handle() {
 fn immutable_pointer_allows_concurrent_owner_reads() {
     let src = "def observe(x: Int):\n    var p = Pointer(to=x)\n    print(p[0], x)\n\ndef main():\n    observe(5)\n";
     assert_eq!(vm(src), "5 5\n");
-}
-
-#[test]
-fn reference_valued_aggregate_preserves_and_writes_through_handle() {
-    let src = include_str!("../conformance/fixtures/reference_valued_aggregate.mojo");
-    assert_eq!(vm(src), "42\n");
-}
-
-#[test]
-fn handwritten_initializer_stores_reference_field_handle() {
-    let src = "struct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Int\n    def __init__(out self, ref[Self.origin] value: Int):\n        self.value = value\n\ndef main():\n    var value = 40\n    var box = RefBox(value)\n    box.value += 2\n    print(value)\n";
-    assert_eq!(parity(src), "42\n");
-}
-
-#[test]
-fn runtime_returned_interior_reference_stores_in_fieldwise_aggregate() {
-    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Int\n\ndef element(ref values: List[Int]) -> ref[origin_of(values)._get_owned_interior[\"element\"]] Int:\n    return values[0]\n\ndef main():\n    var values: List[Int] = [40]\n    ref item = element(values)\n    var box = RefBox(item)\n    box.value += 2\n    print(values[0])\n";
-    assert_eq!(vm(src), "42\n");
 }
 
 #[test]
@@ -2083,26 +2024,6 @@ fn unsafe_uninit_length_slots_are_never_written_until_stored() {
         escaped.contains("read of an uninitialized value taken from Pointer storage"),
         "{escaped}"
     );
-}
-
-/// A member read on a receiver reached through a *reborrowed* `ref` field
-/// resolves the handle chain.
-///
-/// `Outer.src` is a `ref` field; `ref s = self.src` reborrows it, so
-/// `Inner.src` holds a handle whose target slot holds another handle. The
-/// projection walk chased one hop, and an empty-projection root reads back
-/// unchanged, so the second hop left a `Value::Ref` where the `Field` segment
-/// wanted a struct ("invalid reference projection Field(\"n\") on ref").
-///
-/// The place projection `self.src[i]` masked this: it never needed the
-/// receiver as a value. A plain field read does, which is what blocks strict
-/// bounds in `List.__getitem__` (roadmap `unchecked-list-subscript`).
-#[test]
-fn reborrowed_ref_field_receiver_reads_its_own_member() {
-    let out = parity(
-        "@fieldwise_init\nstruct Cell(Copyable, Movable):\n    var n: Int\n\n    def read(ref self) -> Int:\n        return self.n\n\n@fieldwise_init\nstruct Inner[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] Cell\n\n    def get(self) -> Int:\n        return self.src.read()\n\n@fieldwise_init\nstruct Outer[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] Cell\n\n    def head(self) -> Int:\n        ref s = self.src\n        var e = Inner(s)\n        return e.get()\n\ndef main():\n    var c = Cell(7)\n    ref r = c\n    var h = Outer(r)\n    print(h.head())\n",
-    );
-    assert_eq!(out, "7\n");
 }
 
 /// A module-scope `with` statement and sequence destructuring run as the

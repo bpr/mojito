@@ -690,46 +690,6 @@ fn checked_hir_raising_iterator_has_explicit_exhaustion_result() {
     )));
 }
 
-#[test]
-fn checked_hir_reference_yielding_call_next_retains_a_reference_result() {
-    let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct RefIter[o: Origin[mut=False]]:\n    var source: ref[o] Int\n    var done: Bool\n    def __next__(mut self) raises StopIteration -> ref[Self.o] Int:\n        if self.done:\n            raise StopIteration(0)\n        self.done = True\n        return self.source\n\n@fieldwise_init\nstruct RefSource:\n    var value: Int\n    def __iter__(ref self) -> RefIter[origin_of(self.value)]:\n        ref value = self.value\n        return RefIter(value, False)\n\ndef main():\n    var source = RefSource(42)\n    for item in source:\n        print(item)\n";
-    let cfg = linked_function_cfg(source, "main");
-    let instructions: Vec<_> = cfg
-        .g
-        .node_weights()
-        .flat_map(|block| &block.instrs)
-        .collect();
-    let call = instructions
-        .iter()
-        .find_map(|instruction| match instruction {
-            mojito::hir::HirInstr::CallNext { call, .. } => Some(call),
-            _ => None,
-        })
-        .expect("reference-yielding CallNext");
-    let plan = instructions
-        .iter()
-        .find_map(|instruction| match instruction {
-            mojito::hir::HirInstr::BindIteration { plan, .. } => Some(plan),
-            _ => None,
-        })
-        .expect("iteration binding");
-    assert!(matches!(
-        plan.yielded_ty.kind(),
-        mojito::TyKind::Ref(reference) if reference.referent.is_int()
-    ));
-    assert!(matches!(
-        call.result_ty.kind(),
-        mojito::TyKind::Ref(reference) if reference.referent.is_int()
-    ));
-    assert_eq!(
-        call.reference_result.as_ref(),
-        match call.result_ty.kind() {
-            mojito::TyKind::Ref(reference) => Some(reference),
-            _ => None,
-        }
-    );
-}
-
 // Pins the erased machinery via the raw check seam; under the authoritative
 // Compiler this program's closed applications monomorphize.
 #[test]

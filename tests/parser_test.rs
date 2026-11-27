@@ -474,16 +474,13 @@ fn annotation_slots_store_the_annotation_expression() {
     assert!(fields.is_empty());
     let payload = &enum_cases.as_ref().expect("cases")[0].payload;
     assert_eq!(payload[0].kind, ExprKind::Identifier("Float64".into()));
-    let StmtKind::Struct { fields, .. } = &parse(
-        "struct S[*Ts: AnyType]:\n    var t: ref[ImmutAnyOrigin] Int\n    var u: Tuple[*Self.Ts]\n",
-    )[0]
-    .kind
+    let StmtKind::Struct { fields, .. } =
+        &parse("struct S[*Ts: AnyType]:\n    var t: Int\n    var u: Tuple[*Self.Ts]\n")[0].kind
     else {
         panic!("expected a struct");
     };
     assert_eq!(fields[0].ty.kind, ExprKind::Identifier("Int".into()));
-    assert!(matches!(fields[0].reference.as_deref(), Some([_])));
-    assert_eq!(fields[1].reference, None);
+    assert_eq!(fields[0].reference, None);
     assert!(matches!(fields[1].ty.kind, ExprKind::Index { .. }));
 }
 
@@ -2391,7 +2388,6 @@ fn reference_type_argument_reports_the_unclosed_argument_list() {
 
 #[test]
 fn reference_types_outside_type_arguments_still_parse() {
-    parse("struct S[o: Origin[mut=True]]:\n    var value: ref[o] Int\n");
     parse(
         "def apply[o: Origin, f: def(ref[o] Int) -> ref[o] Int](ref[o] x: Int) -> ref[o] Int:\n    return f(x)\n",
     );
@@ -4202,7 +4198,7 @@ fn parses_ref_result_conventions_as_upstream() {
 }
 
 #[test]
-fn rejects_ref_outside_a_result_or_field_convention() {
+fn rejects_ref_outside_a_result_or_parameter_convention() {
     for (source, message) in [
         (
             "def f(ref x: Int) -> ref Int:\n    return x\n",
@@ -4214,7 +4210,11 @@ fn rejects_ref_outside_a_result_or_field_convention() {
         ),
         (
             "struct S[o: Origin[mut=False]]:\n    var f: ref Int\n",
-            Some("a 'ref' field requires an origin specifier"),
+            Some("'ref' patterns are only valid on the left side of an assignment"),
+        ),
+        (
+            "struct S[o: Origin[mut=False]]:\n    var f: ref[Self.o] Int\n",
+            Some("'ref' patterns are only valid on the left side of an assignment"),
         ),
         ("def f(a: Int):\n    var x: ref[a] Int = a\n", None),
         ("def f(x: ref[MutAnyOrigin] Int):\n    pass\n", None),

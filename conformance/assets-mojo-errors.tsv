@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1372
+# swept-count	1373
 assets/type_error/address_space_unknown_leading_dot.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/address_space_unknown_name.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/atomic_bool_has_no_load.mojo	compile-reject	agree	error: no matching method in call to 'load'
@@ -244,6 +244,7 @@ assets/parse_error/parameter_closure_capture_list.mojo	compile-reject	agree	erro
 assets/parse_error/parameter_closure_decorator.mojo	compile-reject	agree	error: '@parameter' closures are no longer supported; remove the decorator and declare the captures in a capture list like '{var}' or '{mut x}'
 assets/parse_error/read_convention_removed.mojo	compile-reject	agree	error: 'read' was removed; use 'imm'
 assets/parse_error/reserved_word_binding_name.mojo	compile-reject	agree	error: unexpected token in expression
+assets/parse_error/ref_struct_field.mojo	compile-reject	agree	error: 'ref' patterns are only valid on the left side of an assignment
 assets/parse_error/ref_type_argument_rejected.mojo	compile-reject	agree	error: expected ']' in call argument list
 assets/parse_error/unified_capture_list_removed.mojo	compile-reject	agree	error: unknown function effect 'unified', expected 'raises' or 'thin'
 assets/runtime_error/abort_arm_reads_live_values.mojo	trap	agree	error: execution crashed

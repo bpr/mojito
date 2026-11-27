@@ -63,13 +63,6 @@ run     assets/ok/pliron_try_cleanup_drop_order.mojo
 run     assets/ok/try_in_loop_temporary_drop_order.mojo
 
 # `ref` fields and origins (Mojito's kept extension).
-run     assets/extensions/ok/ref_field_ctor_from_ref_field.mojo
-run     assets/extensions/ok/ref_field_chained_view_call.mojo
-run     assets/extensions/ok/origin_delegated_multi_binder.mojo
-run     assets/extensions/ok/origin_delegated_parameter_receiver.mojo
-run     assets/extensions/ok/copyable_iterator_reference_aggregate.mojo
-run     conformance/fixtures/reference_valued_aggregate.mojo
-run     conformance/fixtures/reference_iteration_binding_modes.mojo
 
 # Callable compile-time parameters.
 run     conformance/fixtures/callable_parameter_defaults.mojo

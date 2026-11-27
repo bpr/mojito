@@ -132,7 +132,6 @@ fixture assets/ok/conversion_traits_library.mojo
 fixture assets/ok/reference_element_chained_read.mojo
 fixture assets/ok/copyable_iterator_reference_aggregate.mojo
 fixture assets/ok/origin_delegated_multi_binder.mojo
-fixture assets/extensions/ok/origin_delegated_multi_binder.mojo
 
 # Gate failures (2026-11-05 to 2026-11-07 loop runs)
 fixture assets/ok/where_dtype_predicate.mojo

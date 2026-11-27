@@ -1552,42 +1552,6 @@ fn abstract_bound_for_ref_is_rejected() {
 }
 
 #[test]
-fn projected_origin_iterator_contract_carries_parametric_mutability() {
-    // A yielded reference declared as a projection off a parametric-mut
-    // struct origin (`ref[o._get_owned_interior["element"]] T`) lowers with
-    // the origin parameter's declared mutability: a mutable source permits
-    // `for ref` write-through, while a read-parameter source rejects it.
-    let header = "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct ProjIter[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    var index: Int\n\n    def __next__(mut self) raises StopIteration -> ref[Self.o._get_owned_interior[\"element\"]] Int:\n        if self.index >= len(self.src):\n            raise StopIteration()\n        var r = self.index\n        self.index += 1\n        return self.src[r]\n\nstruct Numbers:\n    var items: List[Int]\n\n    def __init__(out self):\n        self.items = [4, 5, 6]\n\n    def __iter__(ref self) -> ProjIter[origin_of(self.items)]:\n        ref items = self.items\n        return ProjIter(items, 0)\n\n";
-    let mutable = format!(
-        "{header}def main():\n    var nums = Numbers()\n    for ref x in nums:\n        x += 1\n"
-    );
-    ok_std(&mutable);
-    let immutable =
-        format!("{header}def bump(nums: Numbers):\n    for ref x in nums:\n        x += 1\n");
-    let error = err_std(&immutable);
-    assert!(
-        matches!(&error, TypeError::ImmutableInPlaceDestination(name) if name == "x")
-            || matches!(&error, TypeError::Unsupported(_)),
-        "got {error:?}"
-    );
-}
-
-#[test]
-fn fixed_immutable_origin_iterator_still_binds_immutably() {
-    // Loop-site resolution touches only parametric mutability: a declared
-    // `Origin[mut=False]` iterator yields immutable references even over a
-    // mutable source, so a `for ref` write is rejected.
-    let error = err_std(
-        "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct FrozenIter[o: Origin[mut=False]]:\n    var src: ref[o] List[Int]\n    var index: Int\n\n    def __next__(mut self) raises StopIteration -> ref[Self.o] Int:\n        if self.index >= len(self.src):\n            raise StopIteration()\n        var r = self.index\n        self.index += 1\n        return self.src[r]\n\nstruct Numbers:\n    var items: List[Int]\n\n    def __init__(out self):\n        self.items = [1, 2]\n\n    def __iter__(ref self) -> FrozenIter[origin_of(self.items)]:\n        ref items = self.items\n        return FrozenIter(items, 0)\n\ndef main():\n    var nums = Numbers()\n    for ref x in nums:\n        x += 1\n",
-    );
-    assert!(
-        matches!(&error, TypeError::ImmutableInPlaceDestination(name) if name == "x")
-            || matches!(&error, TypeError::Unsupported(_)),
-        "got {error:?}"
-    );
-}
-
-#[test]
 fn a_declarations_own_parameters_shadow_module_bindings() {
     // A parametric function type's own binder over a module function of its
     // name.
@@ -1615,24 +1579,6 @@ fn a_declarations_own_parameters_shadow_module_bindings() {
     );
     assert!(
         matches!(&error, TypeError::OriginIdentityMismatch { .. }),
-        "got {error:?}"
-    );
-}
-
-#[test]
-fn parametric_mut_origin_binder_is_erased_from_struct_parameters() {
-    // The infer-only `Bool` that binds a sibling origin parameter's `mut=`
-    // erases with the origin parameter: an application supplies only the
-    // ordinary type parameter, and spelling the Bool explicitly shifts the
-    // explicit arguments, so `Int` lands in the origin slot.
-    ok_std(
-        "@fieldwise_init\nstruct Slot[m: Bool, //, T: Movable, o: Origin[mut=m]]:\n    var value: ref[o] Self.T\n\ndef main():\n    var n = 5\n    ref h = n\n    var s = Slot[Int](h)\n    print(s.value)\n",
-    );
-    let error = err_std(
-        "@fieldwise_init\nstruct Slot[m: Bool, //, T: Movable, o: Origin[mut=m]]:\n    var value: ref[o] Self.T\n\ndef main():\n    var n = 5\n    ref h = n\n    var s = Slot[True, Int](h)\n    print(s.value)\n",
-    );
-    assert!(
-        matches!(&error, TypeError::TypeMismatch { context, .. } if context == "explicit origin argument"),
         "got {error:?}"
     );
 }
@@ -5900,42 +5846,6 @@ fn returned_reference_origin_must_be_the_declared_one() {
 }
 
 #[test]
-fn checks_reference_aggregate_permissions_initialization_and_escape() {
-    let mutable_box = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Int\n\n";
-    let immutable_box = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=False]]:\n    var value: ref[origin] Int\n\n";
-
-    assert!(matches!(
-        check_source(&format!(
-            "{immutable_box}def main():\n    var value = 1\n    ref alias = value\n    var box = RefBox(alias)\n    box.value += 1\n"
-        )),
-        Err(TypeError::ImmutableBinding(_))
-    ));
-    assert!(matches!(
-        check_source(&format!(
-            "{mutable_box}def make() -> RefBox[MutUnsafeAnyOrigin]:\n    var value = 1\n    ref alias = value\n    return RefBox(alias)\n"
-        )),
-        Err(TypeError::ReturnsReferenceToLocal)
-    ));
-    assert!(check_source(
-        "struct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Int\n    def __init__(out self, ref[Self.origin] value: Int):\n        self.value = value\n"
-    )
-    .is_ok());
-    assert!(check_source("struct Seen:\n    var value: ref[ImmUntrackedOrigin] Int\n").is_ok());
-    assert!(matches!(
-        check_source("struct Hidden:\n    var value: ref[MutUnsafeAnyOrigin] Int\n"),
-        Err(TypeError::Unsupported(message)) if message.contains("UnsafeAnyOrigin")
-    ));
-}
-
-#[test]
-fn handwritten_reference_constructor_borrows_a_noncopyable_actual() {
-    assert!(check_source(
-        "struct Item:\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Item\n    def __init__(out self, ref[Self.origin] value: Item):\n        self.value = value\n\ndef main():\n    var item = Item(1)\n    var box = RefBox(item)\n    print(box.value.value)\n"
-    )
-    .is_ok());
-}
-
-#[test]
 fn immutable_returned_reference_cannot_escalate_to_mutable() {
     assert!(matches!(
         check_source(
@@ -6849,19 +6759,6 @@ fn raising_iterator_protocol_uses_typed_stop_iteration_without_len() {
             if context == "iterator '__next__' exhaustion contract"),
         "got {error:?}"
     );
-}
-
-#[test]
-fn raising_reference_iterator_preserves_the_reference_loop_binding_type() {
-    let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct RefIter[o: Origin[mut=False]]:\n    var source: ref[o] Int\n    var done: Bool\n    def __next__(mut self) raises StopIteration -> ref[Self.o] Int:\n        if self.done:\n            raise StopIteration(0)\n        self.done = True\n        return self.source\n\n@fieldwise_init\nstruct RefSource:\n    var value: Int\n    def __iter__(ref self) -> RefIter[origin_of(self.value)]:\n        ref value = self.value\n        return RefIter(value, False)\n\ndef main():\n    var source = RefSource(42)\n    for item in source:\n        print(item)\n";
-    let checked = checked_with_std(source).expect("check reference-yielding iterator");
-    let item = *own_declaring(&checked, "item")
-        .first()
-        .expect("loop binding");
-    assert!(matches!(
-        item.binding_ty.as_ref().map(Ty::kind),
-        Some(mojito::TyKind::Ref(reference)) if reference.referent.is_int()
-    ));
 }
 
 #[test]
@@ -7910,43 +7807,11 @@ fn variadic_struct_tuple_field_needs_a_destructible_pack() {
 }
 
 #[test]
-fn stores_into_outliving_storage_reject_frame_local_loans() {
-    // The store-outward twin of the return escape: a reference-bearing value
-    // rooted at a method-local cannot be stored into `self`, and a `ref`
-    // field cannot be rebound to a frame-local place.
-    let carrier = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n    def swap(mut self):\n        var local: List[Int] = [9]\n        ref alias = local\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    holder.swap()\n";
-    assert!(matches!(
-        err(carrier),
-        TypeError::StoredReferenceEscapesOrigin
-    ));
-
-    let rebind = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n    def refresh(mut self):\n        var local: List[Int] = [9]\n        self.value = local\n\ndef main():\n    var values: List[Int] = [1, 2]\n    ref whole = values\n    var box = RefBox(whole)\n    box.refresh()\n";
-    assert!(matches!(
-        err(rebind),
-        TypeError::StoredReferenceEscapesOrigin
-    ));
-}
-
-#[test]
-fn stores_of_parameter_rooted_loans_into_self_reject_by_origin_identity() {
-    // A parameter-rooted loan does not escape the frame, but a box over the
-    // parameter's origin is not a `RefBox[Self.origin]`: the store rejects on
-    // origin identity, as at the pin, before the escape rule is consulted.
-    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n    def rebind_to(mut self, mut source: List[Int]):\n        ref alias = source\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var other: List[Int] = [5]\n    holder.rebind_to(other)\n";
-    let error = check(&parse(src).expect("parse")).expect_err("origin identity");
-    assert!(
-        matches!(&error, TypeError::OriginIdentityMismatch { found, expected }
-            if found == "RefBox[origin_of(source)]" && expected == "RefBox[origin]"),
-        "got {error:?}"
-    );
-}
-
-#[test]
 fn storage_annotations_require_bound_origin_slots() {
     // A struct field naming an origin-slotted generic bare is not concrete;
     // a local annotation omitting the origin slot fails to infer it. Both
     // mirror the pinned upstream's rejections.
-    let holder = "@fieldwise_init\nstruct Holder[m: Bool, //, o: Origin[mut=m]]:\n    var value: ref[o] List[Int]\n\n";
+    let holder = "@fieldwise_init\nstruct Holder[m: Bool, //, o: Origin[mut=m]]:\n    var value: Pointer[List[Int], o]\n\n";
     let bare_field = format!(
         "{holder}@fieldwise_init\nstruct Wrap:\n    var inner: Holder\n\ndef main():\n    pass\n"
     );
@@ -7956,7 +7821,7 @@ fn storage_annotations_require_bound_origin_slots() {
     // is not concrete; with an initializer the whole parameter list may infer
     // (the pinned upstream accepts `var v: StringSlice = ...` the same way).
     let uninitialized_local = format!(
-        "{holder}def main():\n    var data: List[Int] = [7]\n    ref r = data\n    var v: Holder\n    v = Holder(r)\n    print(v.value[0])\n"
+        "{holder}def main():\n    var data: List[Int] = [7]\n    ref r = data\n    var v: Holder\n    v = Holder(Pointer(to=r))\n    print(v.value[][0])\n"
     );
     assert!(
         matches!(err(&uninitialized_local), TypeError::NotConcrete(shown) if shown == "Holder[_]"),
@@ -7965,19 +7830,19 @@ fn storage_annotations_require_bound_origin_slots() {
     );
 
     let initialized_bare = format!(
-        "{holder}def main():\n    var data: List[Int] = [7]\n    ref r = data\n    var v: Holder = Holder(r)\n    print(v.value[0])\n"
+        "{holder}def main():\n    var data: List[Int] = [7]\n    ref r = data\n    var v: Holder = Holder(Pointer(to=r))\n    print(v.value[][0])\n"
     );
     assert!(check_with_std(&initialized_bare).is_ok());
 
     // The inference positions stay lenient: a constructor expression with a
     // value argument, and a bare origin-slotted generic function parameter.
     let ctor = format!(
-        "{holder}def main():\n    var data: List[Int] = [7]\n    ref r = data\n    var v = Holder(r)\n    print(v.value[0])\n"
+        "{holder}def main():\n    var data: List[Int] = [7]\n    ref r = data\n    var v = Holder(Pointer(to=r))\n    print(v.value[][0])\n"
     );
     assert!(check_with_std(&ctor).is_ok());
 
     let bare_param = format!(
-        "{holder}def read(h: Holder) -> Int:\n    return h.value[0]\n\ndef main():\n    var data: List[Int] = [7]\n    ref r = data\n    print(read(Holder(r)))\n"
+        "{holder}def read(h: Holder) -> Int:\n    return h.value[][0]\n\ndef main():\n    var data: List[Int] = [7]\n    ref r = data\n    print(read(Holder(Pointer(to=r))))\n"
     );
     assert!(check_with_std(&bare_param).is_ok());
 }
@@ -8086,22 +7951,6 @@ fn argument_exclusivity_judges_carried_origins() {
 }
 
 #[test]
-fn omitted_origin_slot_in_a_local_annotation_fails_to_infer() {
-    // A partial application that supplies the non-origin arguments but omits
-    // an explicit origin slot in a storage annotation names the slot (the
-    // pinned upstream rejects the same shape even with an initializer).
-    let src = "@fieldwise_init\nstruct Tagged[n: Int, o: Origin[mut=True]]:\n    var value: ref[o] List[Int]\n\n@fieldwise_init\nstruct Wrap:\n    var inner: Tagged[1]\n\ndef main():\n    pass\n";
-    assert!(
-        matches!(
-            err(src),
-            TypeError::CannotInferParam { name, param } if name == "Tagged" && param == "o"
-        ),
-        "{:?}",
-        err(src)
-    );
-}
-
-#[test]
 fn builtin_origin_values_bind_struct_origin_slots() {
     // The untracked/unsafe-any builtins fill a struct's explicit origin slot
     // in either permission, and an unresolvable origin-shaped argument reports
@@ -8116,38 +7965,6 @@ fn builtin_origin_values_bind_struct_origin_slots() {
         "{:?}",
         err_std(src)
     );
-}
-
-#[test]
-fn immutable_origin_cast_pins_reference_results_read_only() {
-    // `ImmOrigin(Self.o)` in a reference result signature pins
-    // the yielded capability to read-only regardless of the origin
-    // parameter's own parametric `mut=` — the loop site never upgrades a
-    // declared-immutable yield from the source's mutability.
-    let template = "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct NumbersIter[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    var index: Int\n    def __next__(mut self) raises StopIteration -> ref[ImmOrigin(Self.o)] Int:\n        if self.index >= len(self.src):\n            raise StopIteration()\n        var r = self.index\n        self.index += 1\n        return self.src[r]\n\nstruct Numbers:\n    var items: List[Int]\n    def __init__(out self):\n        self.items = [4, 5, 6]\n    def __iter__(ref self) -> NumbersIter[origin_of(self.items)]:\n        ref items = self.items\n        return NumbersIter(items, 0)\n\ndef main():\n    var nums = Numbers()\n";
-    let write = format!("{template}    for ref x in nums:\n        x += 10\n");
-    assert!(matches!(
-        err_std(&write),
-        TypeError::ImmutableInPlaceDestination(_) | TypeError::TypeMismatch { .. }
-    ));
-    let read = format!("{template}    var total = 0\n    for ref x in nums:\n        total += x\n");
-    assert!(check_with_std(&read).is_ok());
-}
-
-#[test]
-fn origin_conversion_to_a_mutable_origin_matches_no_initializer() {
-    // `Origin` declares only the `@implicit` conversion to `ImmOrigin`, so
-    // `MutOrigin(o)` matches no initializer, in a `ref` clause and in a
-    // struct's origin slot alike, as at the pin.
-    let reference = "@fieldwise_init\nstruct It[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    def first(self) -> ref[MutOrigin(Self.o)] Int:\n        return self.src[0]\n\ndef main():\n    print(1)\n";
-    let slot = "struct S[o: Origin]:\n    def __init__(out self):\n        pass\n\ndef f[o: MutOrigin](ref[o] x: Int):\n    var a: S[MutOrigin(o)] = S[o]()\n";
-    for src in [reference, slot] {
-        let error = err_std(src);
-        assert!(
-            matches!(&error, TypeError::BadCall { func, .. } if func == "Origin"),
-            "unexpected error: {error:?}"
-        );
-    }
 }
 
 #[test]
@@ -8169,12 +7986,6 @@ fn origin_cast_from_is_rejected_with_a_migration_diagnostic() {
         message.contains("was removed; use 'ImmOrigin(o)'"),
         "{message}"
     );
-}
-
-#[test]
-fn parameter_rooted_transfers_stay_accepted() {
-    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef fill(mut source: List[Int]) -> List[RefBox[origin_of(source)]]:\n    var sink = List[RefBox]()\n    ref alias = source\n    sink.append(RefBox(alias))\n    return sink^\n\ndef main():\n    var keep: List[Int] = [4]\n    var got = fill(keep)\n";
-    assert!(check(&parse(src).expect("parse")).is_ok());
 }
 
 #[test]
@@ -11096,45 +10907,6 @@ fn comptime_assert_reads_a_values_type_parameter_but_not_its_field() {
         field.contains("cannot use a dynamic value in 'comptime assert' expression"),
         "{field}"
     );
-}
-
-#[test]
-fn a_field_reads_through_by_its_ref_declaration_not_its_reference_type() {
-    // A field declared `ref` reads as its referent; a `!lit.ref` field holds
-    // a reference value, which a read keeps, though both store a reference.
-    let source = "struct Holder[o: ImmOrigin]:\n    var src: ref[Self.o] Int\n    var r: Pointer[Int, Self.o]._mlir_lit_ref\n\n    def __init__(out self, ref[Self.o] src: Int, var r: Pointer[Int, Self.o]._mlir_lit_ref):\n        self.src = src\n        self.r = r\n\ndef main():\n    var x = 7\n    var h = Holder(x, __get_mvalue_as_litref(x))\n    var n: Int = h.FIELD\n";
-    check_with_std(&source.replace("FIELD", "src")).expect("a `ref` field reads through");
-    let error = check_with_std(&source.replace("FIELD", "r"))
-        .expect_err("a `!lit.ref` field does not read through");
-    assert!(
-        matches!(&error, TypeError::TypeMismatch { expected, .. } if expected == "Int"),
-        "{error}"
-    );
-}
-
-#[test]
-fn fieldwise_ref_field_construction_binds_as_its_synthesized_init_call() {
-    // The construction is the synthesized `View.__init__`'s call, whose
-    // `ref` parameter retains the argument's place and lends it to the
-    // constructed view, as a written `ref [Self.o]` constructor's does.
-    let source = "@fieldwise_init\nstruct View[o: MutOrigin]:\n    var src: ref[Self.o] Int\n    var index: Int\n\ndef main():\n    var n = 1\n    var v = View(n, 0)\n    v.src = 2\n    print(n)\n";
-    let checked = checked_with_std(source).expect("check");
-    let has = |predicate: &dyn Fn(&SemanticAdjustment) -> bool| {
-        own_expressions(&checked).any(|expression| expression.adjustments.iter().any(predicate))
-    };
-    assert!(has(&|adjustment| matches!(
-        adjustment,
-        SemanticAdjustment::ResolveCallable(target) if target == "View.__init__"
-    )));
-    assert!(has(&|adjustment| matches!(
-        adjustment,
-        SemanticAdjustment::BorrowRefArguments { arguments, .. }
-            if arguments == &[(mojito::checked::CheckedCallArgumentSource::Positional(0), true)]
-    )));
-    assert!(has(&|adjustment| matches!(
-        adjustment,
-        SemanticAdjustment::RetainCallPlace
-    )));
 }
 
 #[test]

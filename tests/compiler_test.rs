@@ -1016,73 +1016,6 @@ fn keyed_recursion_under_a_runtime_if_stops_at_the_instance_budget() {
 }
 
 #[test]
-fn callee_stores_transfer_loans_to_caller_bookkeeping() {
-    // A callee's accepted store of a loan-carrying value into a `mut`
-    // receiver or parameter records a transfer effect; call sites replay it,
-    // so returning the destination while a transferred loan roots at a local
-    // rejects at the return boundary. Runs through the compiler so the
-    // linked stdlib's seeded `List.append` effect participates.
-    let compiler = Compiler::default();
-    for source in [
-        // via the seeded stdlib effect
-        "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef make() -> List[RefBox[MutUnsafeAnyOrigin]]:\n    var sink = List[RefBox[MutUnsafeAnyOrigin]]()\n    var local: List[Int] = [9]\n    ref alias = local\n    sink.append(RefBox(alias))\n    return sink^\n\ndef main():\n    var got = make()\n",
-        // via a transitively derived free-function effect
-        "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef stash(mut sink: List[RefBox[MutUnsafeAnyOrigin]], var box: RefBox[MutUnsafeAnyOrigin]):\n    sink.append(box^)\n\ndef collect() -> List[RefBox[MutUnsafeAnyOrigin]]:\n    var sink = List[RefBox[MutUnsafeAnyOrigin]]()\n    var local: List[Int] = [9]\n    ref alias = local\n    stash(sink, RefBox(alias))\n    return sink^\n\ndef main():\n    var got = collect()\n",
-    ] {
-        let error = compiler
-            .compile_unlinked(source)
-            .expect_err("transferred local-rooted loan must not escape");
-        assert!(
-            matches!(error, CompilerError::Type(_))
-                && error.to_string().contains("escapes storage"),
-            "{error}"
-        );
-    }
-}
-
-#[test]
-fn overloaded_call_sites_replay_the_shared_effect_entry() {
-    // Overloaded free functions share the bare-name effect entry; selecting
-    // an overload replays it exactly like the single-callable path (this
-    // was a silent pre-existing gap: the overload branch skipped effect
-    // replay entirely). The seeded `List.append` chain requires the linked
-    // compiler.
-    let compiler = Compiler::default();
-    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef stash(mut sink: List[RefBox[MutUnsafeAnyOrigin]], var box: RefBox[MutUnsafeAnyOrigin]):\n    sink.append(box^)\n\ndef stash(x: Int):\n    print(x)\n\ndef collect() -> List[RefBox[MutUnsafeAnyOrigin]]:\n    var sink = List[RefBox[MutUnsafeAnyOrigin]]()\n    var local: List[Int] = [9]\n    ref alias = local\n    stash(sink, RefBox(alias))\n    return sink^\n\ndef main():\n    var got = collect()\n";
-    let error = compiler
-        .compile_unlinked(source)
-        .expect_err("transferred local-rooted loan must not escape");
-    assert!(
-        matches!(error, CompilerError::Type(_)) && error.to_string().contains("escapes storage"),
-        "{error}"
-    );
-}
-
-#[test]
-fn callable_struct_call_replays_transfer_effects() {
-    // An indirect call through a callable-struct value replays the
-    // `Struct.__call__` transfer effects: the seeded `List.append` inside
-    // the body transfers the argument's loans onto the `mut` sink actual,
-    // so the loan source lives while the sink does; a mutation of the
-    // source beside the sink runs, since the loan excludes nothing, and the
-    // sink reads it. Runs through the compiler so the seeded stdlib effect
-    // participates.
-    let compiler = Compiler::default();
-    let beside = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Stasher:\n    var count: Int\n    def __call__(mut self, mut sink: List[RefBox[MutUnsafeAnyOrigin]], var box: RefBox[MutUnsafeAnyOrigin]):\n        self.count += 1\n        sink.append(box^)\n\ndef main():\n    var s = Stasher(0)\n    var sink = List[RefBox[MutUnsafeAnyOrigin]]()\n    var local: List[Int] = [9]\n    ref alias = local\n    s(sink, RefBox(alias))\n    local.append(1)\n    print(sink[0].value[0])\n";
-    let program = compiler
-        .compile_unlinked(beside)
-        .expect("a mutation beside the transferred loan compiles");
-    assert_eq!(compiler.execute(&program).expect("execute").output, "9\n");
-
-    // The same program with the sink's last use before the mutation stays
-    // accepted — no spurious rejection from the indirect replay.
-    let after_last_use = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Stasher:\n    var count: Int\n    def __call__(mut self, mut sink: List[RefBox[MutUnsafeAnyOrigin]], var box: RefBox[MutUnsafeAnyOrigin]):\n        self.count += 1\n        sink.append(box^)\n\ndef main():\n    var s = Stasher(0)\n    var sink = List[RefBox[MutUnsafeAnyOrigin]]()\n    var local: List[Int] = [9]\n    ref alias = local\n    s(sink, RefBox(alias))\n    print(sink[0].value[0])\n    local.append(1)\n    print(local[1])\n";
-    compiler
-        .compile_unlinked(after_last_use)
-        .expect("carrier released before the mutation compiles");
-}
-
-#[test]
 fn owned_iteration_requires_deinitable_elements() {
     // Current Mojo bounds owned iteration at `Movable & Deinitable` elements.
     // A linear List rejects at iterator selection (the bundled
@@ -1147,50 +1080,6 @@ fn owned_pack_iteration_over_linear_elements_is_rejected() {
     };
     assert!(message.contains("residual elements"), "{message}");
     assert!(message.contains("(close Conn)"), "{message}");
-}
-
-#[test]
-fn nested_def_captured_self_store_faces_the_escape_guard() {
-    // The diagnosed nested-def routing gap, closed: a nested `def` capturing
-    // `mut self` stores a frame-local loan into a field of the enclosing
-    // receiver. The nested Def frame's allowed-owner set now includes the
-    // capture-reachable outer owners, so the store-outward guard fires and
-    // rejects what previously slipped through to a stale-reference crash at
-    // runtime.
-    let compiler = Compiler::default();
-    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n\n    def stash_local(mut self):\n        def install() {mut self}:\n            var local: List[Int] = [7]\n            ref alias = local\n            self.slot = RefBox(alias)\n        install()\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    holder.stash_local()\n    print(holder.slot.value[0])\n";
-    let error = compiler
-        .compile_unlinked(source)
-        .expect_err("nested-def store");
-    assert!(matches!(
-        error,
-        CompilerError::Type(mojito::TypeError::StoredReferenceEscapesOrigin)
-    ));
-
-    // The parameter-rooted twin does not escape the frame, but a box over
-    // the parameter's origin is not a `RefBox[Self.origin]`: it rejects on
-    // origin identity, as at the pin, before the escape guard is consulted.
-    let param_rooted = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n\n    def stash_param(mut self, mut source: List[Int]):\n        def install() {mut self, ref source}:\n            ref alias = source\n            self.slot = RefBox(alias)\n        install()\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var other: List[Int] = [5]\n    holder.stash_param(other)\n";
-    let error = compiler
-        .compile_unlinked(param_rooted)
-        .expect_err("param-rooted nested-def store");
-    assert!(
-        matches!(&error, CompilerError::Type(mojito::TypeError::OriginIdentityMismatch { found, expected })
-            if found == "RefBox[origin_of(source)]" && expected == "RefBox[origin]"),
-        "{error}"
-    );
-
-    // Frame balance: a store BESIDE (after) a nested def, in the method's own
-    // body, still faces the guard — the nested frame pushes and pops without
-    // disturbing the method's escape context.
-    let adjacent = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n\n    def stash_local(mut self):\n        def helper(x: Int) -> Int:\n            return x\n        var local: List[Int] = [helper(7)]\n        ref alias = local\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    holder.stash_local()\n";
-    let error = compiler
-        .compile_unlinked(adjacent)
-        .expect_err("adjacent store");
-    assert!(matches!(
-        error,
-        CompilerError::Type(mojito::TypeError::StoredReferenceEscapesOrigin)
-    ));
 }
 
 #[test]
@@ -3369,19 +3258,6 @@ fn template_method_builtin_requirement_witness_beside_generic_rival_runs() {
     assert_entry_output(
         "from std.hash import Hasher\n\n\n@fieldwise_init\nstruct Pair[T: Copyable & Deinitable & Hashable](Copyable, Deinitable, Hashable, Movable):\n    var x: Self.T\n\n    def __hash__[H: Hasher](self, mut hasher: H):\n        self.x.__hash__(hasher)\n\n    def __hash__[U: Copyable](self, mut hasher: List[U]):\n        pass\n\n\nstruct Holder[T: Copyable & Deinitable & Hashable](Hashable, Movable):\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    def __hash__[H: Hasher](self, mut hasher: H):\n        self.item.__hash__(hasher)\n\n\ndef main():\n    print(hash(Holder[Pair[Int]](Pair[Int](3))) == hash(Pair[Int](3)))\n    print(hash(Holder[Int](3)) == hash(Holder[Int](3)))\n",
         "True\nTrue\n",
-    );
-}
-
-#[test]
-fn template_method_origin_bearing_constructions_run() {
-    // A view over the receiver, constructed from a `ref` local into a
-    // fieldwise struct's reference field: the constructed type names the
-    // receiver in an origin argument, kept by binding and rebound per
-    // instance, and the `return` re-resolves the annotation's
-    // `origin_of(self)`.
-    assert_entry_output(
-        include_str!("../assets/extensions/ok/ref_field_template_method_construction.mojo"),
-        "4 q 2 2\n5 r 1 1\n",
     );
 }
 

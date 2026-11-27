@@ -94,7 +94,7 @@ the root `backend-pliron` feature) may, and `scripts/check` excludes it.
    extensions. Accepted programs use valid Mojo syntax and semantics; Mojito
    may reject valid Mojo but must not invent a different language. An
    extension is *kept* only when it tracks an announced upstream direction
-   (today: direct `ref` struct fields; `Origin._subtree` origin casts —
+   (today: `Origin._subtree` origin casts —
    upstream's own experimental spelling, which the pinned build parses but
    rejects at the use; and the `enum` and `union` declarations of
    upstream's enum proposal, which the pin declares as one `__enum`) and is listed in `docs/non-goals.md`; every other
@@ -185,6 +185,13 @@ the root `backend-pliron` feature) may, and `scripts/check` excludes it.
   `scripts/focused`, or a search for every construct that reaches it), and
   fix or file them as one list. Never tighten it one construct per session,
   discovering the next site each time.
+- Keep a rule's sites to what programs spell. If a site is a construct no
+  corpus fixture or bundled library function spells, and the rule would
+  need new support for it, the checker rejects that construct explicitly
+  (invariant 1 permits rejecting valid Mojo). Record it in
+  `docs/non-goals.md` with a spelling that runs. Do not file it as a
+  prerequisite. Rare shapes filed one prerequisite at a time are how a
+  plan's residue outgrows its slices (2026-11-27).
 - A failure your own change causes is never residue. Fix the code, or update
   the test, snapshot, or golden the change makes stale, in the same task.
 - Size every `docs/roadmap.md` entry so one session can land it and delete

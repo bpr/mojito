@@ -33,13 +33,13 @@ struct _ListIter[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
     ] = Self
 
-    var src: ref[iterable_origin] List[Self.T]
+    var src: Pointer[List[Self.T], Self.iterable_origin]
     var index: Int
 
     # Kept as an optimization hint and compatibility API.  Exhaustion is
     # reported by StopIteration, not by the old HasNext/length sentinel.
     def __len__(self) -> Int:
-        return len(self.src) - self.index
+        return len(self.src[]) - self.index
 
     @inline(.always)
     def bounds(self) -> Tuple[Int, Optional[Int]]:
@@ -55,11 +55,11 @@ struct _ListIter[
     def __next__(mut self) raises StopIteration -> ref[
         Self.iterable_origin._get_owned_interior["element"]
     ] Self.T where conforms_to(Self.T, Copyable):
-        if self.index >= len(self.src):
+        if self.index >= len(self.src[]):
             raise StopIteration()
         var r = self.index
         self.index += 1
-        return self.src[r]
+        return self.src[][r]
 
 # The borrowed back-to-front iterator `reversed(list)` returns: `_ListIter`'s
 # shape with the index counting down. It iterates itself so a temporary
@@ -73,7 +73,7 @@ struct _ListReversedIter[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
     ] = Self
 
-    var src: ref[iterable_origin] List[Self.T]
+    var src: Pointer[List[Self.T], Self.iterable_origin]
     var remaining: Int
 
     def __len__(self) -> Int:
@@ -93,7 +93,7 @@ struct _ListReversedIter[
         if self.remaining <= 0:
             raise StopIteration()
         self.remaining -= 1
-        return self.src[self.remaining]
+        return self.src[][self.remaining]
 
 # The consuming iterator `List.__iter__(var self)` returns: it holds the
 # drained `List` itself and moves elements out of its buffer by index. Its
@@ -630,14 +630,18 @@ struct List[T: AnyType](
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)] where conforms_to(
         Self.T, Copyable
     ):
-        ref source = self
-        return _ListIter[Self.T](source, 0)
+        # The cast keeps `self`'s mutability until R1300 lands.
+        return _ListIter[Self.T](
+            Pointer(to=self).unsafe_origin_cast[origin_of(self)](), 0
+        )
 
     def __reversed__(ref self) -> Self.ReversedIterType[origin_of(self)] where conforms_to(
         Self.T, Copyable
     ):
-        ref source = self
-        return _ListReversedIter[Self.T](source, len(self))
+        # The cast keeps `self`'s mutability until R1300 lands.
+        return _ListReversedIter[Self.T](
+            Pointer(to=self).unsafe_origin_cast[origin_of(self)](), len(self)
+        )
 
     def __iter__(
         var self,
