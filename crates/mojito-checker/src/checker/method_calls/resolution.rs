@@ -176,39 +176,39 @@ impl Checker {
             span, call, obj_ty, ..
         } = site;
         let param_args = call.param_args;
-        if self.nominal_struct(obj_ty).is_some()
-            && let Some(arguments) = &resolved.instantiation
-        {
-            self.record_dtype_parameter_arguments(param_args, arguments);
-            self.record_at(span.clone()).method_instantiation = Some(
-                resolved
-                    .declared_instantiation
-                    .clone()
-                    .unwrap_or_else(|| arguments.clone()),
-            );
-            self.record_folded_bracket_attributes(
-                span,
-                &crate::checker::call_inference::folded_parameter_attributes(
-                    &resolved.param_decls,
-                    param_args,
-                    arguments,
-                ),
-            );
-        }
-        // A call through a bound binds its requirement's parameters, which
-        // a default the requirement declares reads.
-        if resolved
+        let Some(arguments) = &resolved.instantiation else {
+            return;
+        };
+        // A call through a bound applies its requirement's parameters as a
+        // struct method call applies its own: each written bracket argument
+        // is an attribute of the call, and a default the requirement
+        // declares reads them.
+        let through_bound = resolved
             .lowered_name
             .as_deref()
-            .is_some_and(mojito_symbol::symbol::is_trait_dispatch_symbol)
-            && let Some(arguments) = &resolved.instantiation
-        {
-            self.record_at(span.clone()).bound_instantiation = Some(
-                resolved
-                    .declared_instantiation
-                    .clone()
-                    .unwrap_or_else(|| arguments.clone()),
-            );
+            .is_some_and(mojito_symbol::symbol::is_trait_dispatch_symbol);
+        let nominal = self.nominal_struct(obj_ty).is_some();
+        if !nominal && !through_bound {
+            return;
+        }
+        let declared = resolved
+            .declared_instantiation
+            .clone()
+            .unwrap_or_else(|| arguments.clone());
+        self.record_dtype_parameter_arguments(param_args, arguments);
+        self.record_folded_bracket_attributes(
+            span,
+            &crate::checker::call_inference::folded_parameter_attributes(
+                &resolved.param_decls,
+                param_args,
+                arguments,
+            ),
+        );
+        if nominal {
+            self.record_at(span.clone()).method_instantiation = Some(declared.clone());
+        }
+        if through_bound {
+            self.record_at(span.clone()).bound_instantiation = Some(declared);
         }
     }
 

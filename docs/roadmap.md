@@ -4853,40 +4853,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R394 A requirement with its own value parameter cannot be called
-  through a bound**
-
-  Problem: `x.mk[4]()` in `def use[T: Maker](x: T)`, for `def mk[n:
-  Int](self) -> SIMD[DType.int32, n * 2]: ...` in `trait Maker`, fails with
-  "MIR function 'use' register r2 names parameter `n` of `Maker.mk` that no
-  enclosing declaration binds", where the pin runs it.
-  - The call on the conformer itself (`M().mk[2]()`) runs.
-  - The result type through the bound keeps the requirement's binder
-    instead of the call's argument.
-  - The cause: a call through a bound records no instantiation of the
-    requirement's own parameters (`record_method_call_instantiation` needs
-    a struct receiver), so `instantiated_args` stays empty and the
-    bracket argument keeps a run-time register.
-  - Probe: `fp[n](b: PBox[n])` returning `pk(b)`, for
-    `@always_inline("nodebug") def pk[T: Pick](a: T)` returning
-    `a.pick[2]()`: the inliner folds the call to `PBox.pick`, but `fp`
-    keeps `n` (two instances), where the pin and the direct call
-    `b.pick[2]()` remove it.
-  - Probe: `u.space()` in `def f[U: T](u: U)`, for a requirement
-    `def space[a: AddressSpace](ref[_, a] self) -> Int` the call deduces
-    from the receiver's place, checks but fails elaboration ("in
-    `S.space`: unsupported monomorphization cannot resolve parameter
-    `a`"), where the pin prints `0`.
-  - Probe: `p.peek(x)` in `def via[P: Peek](p: P, mut x: Int)`, for a
-    requirement `def peek[m: Bool, //, o: Origin[mut=m]](self, ref[o] x:
-    Int) -> Bool` whose witness returns `m`, fails elaboration ("in
-    `Box.peek`: unsupported monomorphization cannot resolve parameter
-    `m`"), where the pin prints `True`: only the call knows the
-    argument's mutability, and `Box(1).peek(x)` runs.
-  - Found while landing a function applied in a signature (2026-10-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2449 A subscript's MIR call carries no deduced compile-time
   arguments**
 
@@ -11717,7 +11683,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     clause, keeping an address-space operand, as upstream's
     `addImplicitTypeParams` does. A declared `ref[o]` over such a pair
     already binds and reads its `mut=` binder on every call path but a
-    call through a bound (R394) and a subscript (R2449).
+    subscript (R2449).
   - A prototype (2026-11-22) packaged the bundled library only after two
     fixes that already landed: a conformance's canonical `ref` contract
     names an own `mut=` binder by its place in the own list, and a tuple

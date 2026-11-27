@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call through a trait bound now applies the requirement's own
+  bracket arguments as compile-time attributes, as a call on a conformer
+  does, instead of passing each in a run-time register (R394).
+  `x.mk[4]()` in `def use[T: Maker](x: T)` carries `n = 4` in its
+  application alone. Requirements whose parameters come from a bracket,
+  the receiver's place (`ref[_, a] self`), or an argument's origin
+  (`ref[o] x` over `o: Origin[mut=m]`) run through the bound as at the
+  pin (`assets/ok/trait_requirement_own_parameter_through_bound.mojo`).
+
 - A loop's implicit `__iter__` call now binds the callee's compile-time
   parameters from the iterable, as an ordinary `c.__iter__()` call does,
   and carries its declared list and solved arguments, as does its

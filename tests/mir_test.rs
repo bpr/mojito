@@ -7384,6 +7384,32 @@ fn origin_specialized_function_values_use_indirect_call_mir() {
 }
 
 #[test]
+fn call_through_bound_applies_bracket_argument_as_attribute() {
+    let source = "trait Pick:\n    def pick[k: Int](self) -> Int: ...\n\n@fieldwise_init\nstruct B(Copyable, Pick):\n    def pick[k: Int](self) -> Int:\n        return k\n\ndef through[T: Pick](t: T) -> Int:\n    return t.pick[2]()\n\ndef main():\n    print(through(B()))\n";
+    let mir = driver_mir(source);
+    let pick = nested_instructions(&mir_function(&mir, "through").body)
+        .into_iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::MethodCall {
+                method,
+                param_arg_regs,
+                instantiated_args,
+                ..
+            } if method == "pick" => Some((param_arg_regs, instantiated_args)),
+            _ => None,
+        })
+        .expect("a `pick` call through the bound");
+    assert!(
+        pick.0.iter().all(|argument| argument.value.is_none()),
+        "{pick:?}"
+    );
+    assert!(
+        matches!(pick.1.as_slice(), [mojito::types::TyArg::Val(_)]),
+        "{pick:?}"
+    );
+}
+
+#[test]
 fn explicit_origin_selection_erases_semantic_arguments_and_types_function_constants() {
     let direct = "def choose[origin: Origin[mut=True]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\ndef choose[origin: Origin[mut=True]](ref[origin] value: Float64) -> ref[origin] Float64:\n    return value\n\ndef main():\n    var value = 40\n    ref selected = choose[origin_of(value)](value)\n    selected += 2\n";
     let checked = mojito::check_program(&linked(direct)).expect("check");
