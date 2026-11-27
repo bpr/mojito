@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2650**.
+Next free ID: **R2653**.
 
 ## Ordered Work
 
@@ -2884,7 +2884,51 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     pin runs all three. The bundled `String.unsafe_ptr` therefore reaches
     its inline bytes through a `MutUntrackedOrigin` cast; once this lands
     it can spell upstream's `Pointer(to=self).unsafe_bitcast[Byte]().as_imm()`.
+  - Probe: `var p: Pointer[List[Int], o2] = Pointer(to=xs)` in `def
+    show_ref[m2: Bool, //, o2: Origin[mut=m2]](ref[o2] xs: List[Int])` is
+    "type mismatch for variable 'p': expected Pointer[List[Int], origin#1],
+    found Pointer[m2, List[Int], AddressSpace(SIMDLength(0))]". The found
+    type's display is malformed too: it spells the `mut` argument and no
+    origin.
+  - Probe: `P(Pointer(to=xs), 1)` in that `show_ref`, over `@fieldwise_init
+    struct P[m: Bool, //, o: Origin[mut=m]]` holding `var src:
+    Pointer[List[Int], Self.o]`, fails the same way ("type mismatch for
+    field 1 of 'P'"), where the pin prints the element.
+  - Probe: `BoxIter(Pointer(to=source), 0)` after `ref source = self` in
+    `def __iter__[m: Bool, //, o: Origin[mut=m]](ref[o] self) ->
+    BoxIter[origin_of(self)]`, over `struct BoxIter[o: Origin[mut=False]]`,
+    is "type mismatch for field 1 of 'BoxIter'", where the pin iterates.
+  - R2516 makes every bare `ref` parameter a `ref[o]` one. A prototype then
+    failed six `assets/ok` fixtures here, among them
+    `forward_struct_reference_iterator`,
+    `pointer_field_fieldwise_init_binder`, `pointer_field_view_returned`,
+    and `template_method_for_loop`.
   - Found while landing R743 (2026-10-23).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2650 A `ref[o] self` receiver read through a `comptime` alias
+  fails its own origin check**
+
+  `parsed.value()` after `comptime parsed = O(n)`, over `def value[m: Bool,
+  //, o: Origin[mut=m]](ref[o] self) -> Int`, is rejected ("value passed to
+  'self' cannot be converted from 'O' to ref 'O'", noting "operand origin
+  'origin_of(parsed)' doesn't match expected origin 'origin_of(parsed)'"),
+  where the pin runs it.
+  - The same call on a bare `def bare(ref self)` runs.
+  - Each read of the alias materializes a fresh owner. The call's solve
+    binds `o` to one temporary's place, and `Checker::check_receiver_ref`
+    (`checker/origins/solve.rs`) compares it with another's.
+  - Lever: the receiver check reads the receiver operand the solve bound,
+    and `receiver_reference_actual` does not materialize the alias again.
+  - Probe: `def f[n: Int]() -> Int: comptime parsed = O(n); return
+    parsed.value() + parsed.bare()` over `@fieldwise_init struct O(
+    ImplicitlyCopyable)` with `var v: Int` and the two methods above,
+    printing `f[3]()`. The pin prints `6`.
+  - R2516 makes every bare `ref self` this receiver: the library then
+    stops packaging at `std/sys/defines.mojo`'s `parsed.value()` over
+    `Optional.value(ref self)`.
+  - Found while planning R2516 (2026-11-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4372,6 +4416,42 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R2471 (2026-11-22).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R2651 A `ref[o]` parameter whose type names no origin binder
+  leaves that binder's `mut=` uninferred in the library's own check**
+
+  Declaring `List.__init__[iterable_is_mut: Bool, iterable_is_origin:
+  Origin[mut=iterable_is_mut], //, IterableType: Iterable](ref[
+  iterable_is_origin] iterable: IterableType, out self)` in
+  `stdlib/std/collections/list.mojo` stops the library from packaging:
+  "invalid call to 'List.__init__': failed to infer parameter
+  'iterable_is_mut'". The pin declares exactly this pair for its bare `ref
+  iterable`.
+  - The failing call is `_exp_taylor`'s `comptime coefficients =
+    List([Scalar[dtype](1.0), …])` (`std/math/math.mojo`), in about forty
+    instances.
+  - At `reject_uninferred_origins`'s caller (`call_inference.rs`) the
+    parameter's pattern is `IterableType`, which names no origin binder,
+    and the call has no place, so `bind_callee_origins` never runs. The
+    `named` search reads parameter types only, never the parameter's `ref`
+    clause.
+  - Unisolated: user copies of the call pass with the declared `List`,
+    over runtime places and literals, as `comptime ws = List([6, 7])`,
+    generic over `dtype`, and as a verbatim copy of `_exp_taylor`. Only
+    the library's own check of `math.mojo` fails.
+  - Lever: find what differs in the library's check (its in-package
+    resolution of `List`, or its generic-body check), then have
+    `resolve_call_params` bind a `ref[o]` parameter's binders from its
+    clause as well as from its type.
+  - Probe: `assets/ok/list_from_iterable.mojo` makes the call at run time.
+    With the library's failure bypassed, a prototype failed it in
+    elaboration ("monomorphization cannot resolve parameter
+    `$iterable_is_mut`").
+  - R2516 declares this pair for every bare `ref`, so the edit is its
+    library's state.
+  - Found while planning R2516 (2026-11-26).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1774 An `@implicit` initializer over a type pack does not
   convert**
@@ -11628,67 +11708,99 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2652 The MIR types a declared `ref[o]` handle over the synthetic
+  reference binder, not `o`'s `mut=` binder**
+
+  The checked types of a `ref[o]` parameter or receiver read `o`'s own
+  `mut=` binder, but the MIR lends the handle register
+  `Mutability::Param(OriginParamId::reference_binder(slot))`. The inliner
+  binds the two from different facts.
+  - Probe: `Pointer(to=self.get()).unsafe_origin_cast[origin_of(self)]()[]`
+    returned at `ref[self] Int` from `def whole[m: Bool, //, o:
+    Origin[mut=m]](ref[o] self)`, over `def get(ref self) -> ref[self.x]
+    Int`, then `r = 9` through `ref r = w.whole()`. It fails verification
+    after `inline-parametric`: "MIR function 'W.whole': MakeRef destination
+    recovers permission unavailable through its source capability". The
+    pin prints `9`, and so does Mojito with `MOJITO_PRE_ELABORATION=0` or a
+    bare `ref self` on `whole`.
+  - In that MIR, `whole`'s receiver register is `mutability_param(65536)`,
+    and the reference `get` returns from it is `mutability_param(1)`.
+  - `ParameterKinds::of` (`mir/call_addresses.rs`) and `lower_fn`'s
+    `inferred` vector (`mir.rs`) mark every `ArgConvention::Ref` parameter
+    inferred, a declared `ref[o]` included.
+  - Sites: `inferred_reference_parameters` and `reference_binders`
+    (`mir.rs`, `mir/nested.rs`), `place_handle_ty` (`mir/calls.rs`),
+    `ParameterKinds::inferred` and `place_mutability`
+    (`mir/call_addresses.rs`), and `argument_mutabilities`
+    (`analysis/inline_parametric.rs`).
+  - Lever: a declared clause's handle lends `Param` of its origin's
+    `mut=` binder, read from the checked declaration. Only a bare `ref`
+    keeps the synthetic id, until R2516 removes it.
+  - R2516 makes every bare `ref` a declared one. A prototype of it failed
+    `pointer_to_reference_call` and `pack_element_rebind` here.
+  - Test: `tests/compiler_test.rs`'s `returned("T.at")` assertions pin
+    `reference_binder(0)`. So does
+    `tests/mir_passes/automatic-inline/ref_result_pointer_binder_inlined`,
+    which spells `mutability_param(65537)`.
+  - Found while planning R2516 (2026-11-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R2516 A bare `ref` parameter declares no implicit `x_is_mut` and
   origin binders**
 
   Upstream's `ref x: T`, `ref[_] x: T`, and `ref self` declare an
-  infer-only `x_is_mut: Bool` and an origin over it, which the clause
-  names. Mojito instead gives the handle `Mutability::Param` over a
-  synthetic id (`OriginParamId::reference_binder`), which no declared
-  list holds, so no body reads it and no instance binds it.
+  infer-only `x_is_mut` and an origin over it, which the clause names.
+  Mojito instead gives the handle `Mutability::Param` over a synthetic id
+  (`OriginParamId::reference_binder`), which no declared list holds, so
+  no body reads it and no instance binds it.
   - Probe: `Pointer(to=self).mut` in a `ref self` method and
     `Pointer(to=x).mut` in `def r(ref x: Int)`, called on a `var` and
     from a read-only caller, print `False` four times, where the pin
     prints `True True False False`.
   - Probe: the same over `def a(ref[_] x: Int)`, whose handle is even
-    `Immutable` today.
+    `Immutable` today, since `clause_origins` counts `_` as an origin.
   - Probe: `Cursor(Pointer(to=self.x))` in a `ref self` method, and
     `Cursor(Pointer(to=x))` in `def r(ref x: Int)`, over `struct
     Cursor[mut: Bool, //, o: Origin[mut=mut]]`, record `ct_bool(false)`
-    in the call's `mut` slot: the pointer's wrongly immutable `mut`
-    decides it, where the pin's call reads `x_is_mut`.
-  - Probe: `var f = r` for that `r` is accepted, where the pin rejects it
-    with "parameter 'x_is_mut' … is not bound".
-  - Probe: `assets/ok/list_contiguous_slice_view.mojo` (`for x in xs[:2]`
-    over a `var xs: List[Int]`) fails post-elaboration verification
-    ("binding of Span$mono$Vfalse$TInt[false, Int] to a slot of type
-    Span$mono$Vtrue$TInt[true, Int]"). `List.__getitem__(ref self, slice:
-    ContiguousSlice)` builds its `Span` over `origin_of(self)` from
-    `self.unsafe_ptr()`, whose `mut` reads `False`, so the shared instance
-    returns a read-only span that inlining hands a mutable caller. The
-    same over a user `def view(ref self) -> Span[Int,
-    origin_of(self.xs)._get_owned_interior["element"]]` iterated in a loop.
-    It last ran before `Self` held the struct's `mut=` binder (2d7e175e9),
-    when the inlined `Span.__iter__` receiver kept a deferred slot that
-    hid the mismatch.
+    in the call's `mut` slot. Printing `Self.mut` gives `False` four
+    times, where the pin prints `True True False False`.
+  - Probe: `var f = r` for that `r` (and for `a`) is accepted, where the
+    pin rejects it with "parameter 'x_is_mut' … is not bound".
   - Lever: `auto_parameterize` (`mojito-comptime`) appends the pair
-    (`$x_is_mut`, an origin `Origin[mut=$x_is_mut]`) after the
-    declaration's own infer-only binders and names the origin in the
-    clause, keeping an address-space operand, as upstream's
-    `addImplicitTypeParams` does. A declared `ref[o]` over such a pair
-    already binds and reads its `mut=` binder on every call path.
-  - A prototype (2026-11-22) packaged the bundled library only after two
-    fixes that already landed: a conformance's canonical `ref` contract
-    names an own `mut=` binder by its place in the own list, and a tuple
-    unpack's accessor binds its index only to its argument binder.
-  - The prototype also had to leave the implicit binders out of a
-    method's overload rank (`method_calls/selection.rs`): counted as
-    origin binders, they made `xs.__iter__()` on a place prefer
-    `__iter__(var self)`, where the pin keeps the `ref self` one (R2518
-    gives them their pin rank).
-  - It changes the MIR text of every `ref` signature, so the hand-written
-    MIR cases under `tests/mir_passes` and `tests/snapshots` that spell a
-    `ref` convention gain the two declarations.
-  - `register_reference_binder`'s inferred half,
-    `reference_parameter_mutabilities`, `OriginParamId::reference_binder`
-    and its MIR and inliner readers (`ParameterKinds::inferred`,
-    `inline_parametric`'s `argument_mutabilities`) then go.
+    (`$x_is_mut: Bool`, `$x_is_origin: Origin[mut=$x_is_mut]`, both
+    infer-only) after the declaration's own infer-only binders, per
+    argument in argument order beside its `Pointer[_, _]` binders, as
+    upstream's `addImplicitTypeParams` does. The clause names the origin,
+    replacing a `_` and keeping an address-space operand.
+  - The binders display as the pin names them (`x_is_mut`,
+    `self_is_mut`), and the hard-coded `self_is_mut` rejection in
+    `method_calls/type_receivers.rs` goes.
+  - Leave the pair out of the overload rank (`method_calls/selection.rs`
+    and the free-call `overload_rank` callers). Counted, it made
+    `xs.__iter__()` on a place prefer `__iter__(var self)`, which stops
+    the library packaging. R2518 gives the pair its pin rank.
+  - `register_reference_binder`'s inferred half and
+    `reference_parameter_mutabilities` then go, and so do
+    `OriginParamId::reference_binder` and its MIR readers, which R2652
+    leaves serving bare `ref` alone.
+  - The hand-written MIR cases under `tests/mir_passes` and
+    `tests/snapshots` are inputs the desugaring never reaches, so they do
+    not change.
+  - A function type's `def(ref x: T)` is out of scope: it keeps
+    `SigOrigin::Infer` and `SigMutability::Infer`.
+  - Plan: `R2516-a-bare-ref-parameter-declares-no-plan.md` (repo root,
+    untracked), with a prototype's site list.
+  - The prototype sent every bare `ref` down the declared `ref[o]` path,
+    whose open bugs then stopped the library packaging (R2650, R2651) and
+    failed 50 of a 387-fixture `assets/ok` sample (R2517, R1300, R2652).
+    R2515 is the same path through an implicit conversion.
   - Found while landing R2375 (2026-11-21).
-  - Depends on R2514, R394, R2449.
+  - Depends on R2650, R2651, R2517, R1300, R2652, R2515.
   - Model: Fable, Planned.
 
-- [ ] **R2517 A member instance over `origin_of(self)` keeps a deferred
-  `mut=` slot**
+- [ ] **R2517 A struct instance over `origin_of` of the receiver or a
+  parameter keeps a deferred `mut=` slot**
 
   `reflect[type_of(xs.__iter__())].name()` over `var xs = [1, 2]` prints
   `_ArrayIter[iterable_mut, …]`, where the pin prints `True` in that slot.
@@ -11701,10 +11813,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     (`generics.rs`), `pointer_origin_arg` (`type_resolution.rs`),
     `inferred_mut_argument` (`subst.rs`), and two canonicalizations in
     `types.rs`.
-  - Lever: with R2516's declared `self_is_mut`, those sites read the
-    receiver's declared origin binder, and a member's `mut=` binder takes
+  - Lever: those sites read the receiver's or parameter's own
+    mutability, and an instance's `mut=` binder takes
     `origin_mutability_slot` of its supplied origin, as
     `declared_call_arguments` fills one.
+    - For `mut` and read conventions, the convention gives it.
+    - For a bare `ref` it is the handle's binder: today the synthetic
+      `OriginParamId::reference_binder`, and R2516's declared `x_is_mut`
+      once that lands. So this fix does not wait on R2516.
   - Probe: `reflect[type_of(d.keys())].name()` over a `var d` prints
     `_DictKeyIter[iterable_mut, …]`, where the pin prints `True`.
   - Probe: `var it: List[Int].IteratorType[origin_of(xs)] =
@@ -11729,8 +11845,37 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `$origin_mut` for these slots (R2633), but its checked type keeps the
     own deferred `mut=` (`_ListIter[iterable_mut, T, origin_of(self)]`),
     so record and type disagree until this lands.
+  - Probe: `reflect[type_of(viewl(xs))].name()` over `def viewl(mut xs:
+    List[Int]) -> View[origin_of(xs)]` and `struct View[view_mut: Bool, //,
+    view_origin: Origin[mut=view_mut]]` prints `View[view_mut, {}]`, where
+    the pin prints `View[True, …]` (`View[False, …]` for a read `xs`). A
+    `View` method reading `Self.view_mut` on the result fails elaboration:
+    "parameter `view_mut` is read, but an instance that removed it erased
+    its struct argument (`_REMOVED_ARG`)". `var w: View[origin_of(xs)]` over
+    a local binds `True`.
+  - Probe: `b.view().first()` over `def view(mut self) ->
+    View[origin_of(self.items)]` (or `ref self`, or a declared `ref[o]
+    self`), where `View.first` returns `get(self.src[])` through its
+    `Pointer[List[Int], Self.view_origin]` field over `def get[m: Bool, //,
+    o: Origin[mut=m]](ref[o] xs: List[Int])` printing `m`. It fails
+    elaboration ("in `get`: unsupported monomorphization cannot resolve
+    parameter `m`"), where the pin prints `True` and the element.
+  - Probe: `assets/ok/list_contiguous_slice_view.mojo` (`for x in xs[:2]`
+    over a `var xs: List[Int]`) fails post-elaboration verification
+    ("binding of Span$mono$Vfalse$TInt[false, Int] to a slot of type
+    Span$mono$Vtrue$TInt[true, Int]"). `List.__getitem__(ref self, slice:
+    ContiguousSlice)` builds its `Span` over `origin_of(self)` from
+    `self.unsafe_ptr()`, whose `mut` reads `False`.
+    - A prototype of R2516 did not fix it, and neither did pointing
+      `bound_origin_mutability` and `pointer_origin_arg` at the declared
+      receiver binder, so start from the `Span` construction's `mut` slot
+      in `List.__getitem__`.
+  - R2516 routes every bare `ref` through these instances: a prototype
+    of it failed 40 of a 387-fixture `assets/ok` sample here, every `for`
+    over an `Array` or `List` among them (`_ListIter.__next__`'s
+    `iterable_mut`, `_REMOVED_ARG`).
   - Found while landing R2375 (2026-11-21).
-  - Depends on R2516.
+  - Depends on nothing.
   - Model: Opus, Planned.
 
 - [ ] **R2376 A parameter typed by a struct with an unbound origin
