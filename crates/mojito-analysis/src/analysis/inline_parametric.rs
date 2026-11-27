@@ -744,6 +744,7 @@ impl DefaultValue {
             target,
             arg,
             parameter: converted,
+            ..
         } = default
         else {
             return Literal::of(default, ty).map(Self::Literal);

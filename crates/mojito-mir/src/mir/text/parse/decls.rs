@@ -910,10 +910,17 @@ impl Decoder {
                     Ok(value) => Some(self.ty(value)?),
                     Err(()) => None,
                 };
+                // Schema 1.238 records the conversion's compile-time
+                // application; an older artifact's has none.
+                let instantiated_args = self
+                    .field(fields, "arguments")
+                    .map(|value| self.ty_args(value))
+                    .unwrap_or_default();
                 Some(CheckedConst::Construct {
                     target,
                     arg: Box::new(arg),
                     parameter,
+                    instantiated_args,
                 })
             }
             _ => {

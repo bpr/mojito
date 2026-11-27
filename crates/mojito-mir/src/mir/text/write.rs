@@ -2787,10 +2787,14 @@ fn checked_const(value: &CheckedConst) -> String {
             target,
             arg,
             parameter,
+            instantiated_args,
         } => {
             let mut fields = vec![("target", quote(target)), ("arg", checked_const(arg))];
             if let Some(parameter) = parameter {
                 fields.push(("parameter", ty_value(parameter)));
+            }
+            if !instantiated_args.is_empty() {
+                fields.push(("arguments", list(instantiated_args.iter().map(ty_arg))));
             }
             record("checked_construct", &fields)
         }

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2633**.
+Next free ID: **R2641**.
 
 ## Ordered Work
 
@@ -58,31 +58,174 @@ which names the upstream pass each one follows. Each is measured by the
 
 Upstream's elaborator also never infers a binding: each call names its
 callee with the complete parameter application, which it substitutes.
-R2625–R2632 stage that, in
+R2625–R2640 stage that, in
 [`docs/call-application-plan.md`](call-application-plan.md), one entry per
 slice.
 
-- [ ] **R2632 A call's compile-time application holds placeholder slots**
+- [ ] **R2633 A call's `mut=` slot governed by a receiver-, `ref`-parameter-,
+  or bare-`Origin`-rooted origin records the callee's own binder**
+
+  The slot holds `ct_deferred` of the callee's binder, which no caller
+  binds, where upstream's call reads the caller's implicit `self_is_mut`.
+  - Cause: `declared_call_arguments` (`checker/origins/construct.rs`) fills
+    the slot from `origin_mutability_slot`, which falls to the callee's
+    binder when the governing origin is `origin_of(self)`, a `ref`
+    parameter's, or a bare `o: Origin`'s. None declares a `mut=` binder.
+  - Lever: write the caller-open read `Mutability::Param(id).mut_argument()`
+    in that `mut=` arm only. `origin_mutability_slot` also spells types,
+    so it stays.
+  - A copy or move MIR synthesizes takes an instance's own deferred `mut=`
+    (R2517's slot) through `ParamDecl::constructor_call_arguments`
+    (`type_construction.rs`'s `struct_arguments`). Close it the same way,
+    with a `types.rs` helper beside `static_mutability_slot`.
+  - Risk: `Mutability::RECEIVER` is `OriginParamId(0)`, the id a struct's
+    first origin binder also takes, so a `$origin_mut:0` read is ambiguous
+    in a method of such a struct. Note it under R2628.
+  - Probe: `iterable_mut` of every std iterator a `ref self` method builds
+    (`_ListIter`, `_ListReversedIter`, `_ArrayIter`, `_SetIter`,
+    `_OptionalIter`, `_DictKeyIter`, `_DictValueIter`, `_DictEntryIter`).
+  - Probe: `StringSpan(self)` in `String.__iter__` and both
+    `String.__getitem__` slice overloads, and `Pointer[origin=
+    origin_of(self)](_mlir_value=…)` in `StaticTuple._unsafe_ref`.
+  - Probe: `assets/ok/{pointer_field_view_method_return,
+    template_method_receiver_pointer,origin_argument_direct_applications,
+    loan_beside_owner_access,construction_union_origin_mut_write}.mojo`.
+  - Probe: `_ArrayIter.__moveinit__`'s `iterable_mut` in
+    `assets/ok/std_iter_map.mojo`.
+  - Each probe is a line of the placeholder probe in
+    `docs/call-application-plan.md` §B1e.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R2634 A method's own origin binder that only its `ref[o] self`
+  receiver binds records `_` in the call's application**
+
+  Upstream binds `self` as argument 0, so the receiver's clause solves the
+  binder.
+  - Cause: `instantiate_method_generics` (`checker/generics.rs`) solves
+    from the arguments' pairs, and the receiver's `ref[o] self` clause is
+    not among them, so `declared_call_arguments` gets no binding for `o`.
+  - Lever: push `reference_solve_pair` of the receiver's clause into the
+    one solve.
+  - Check the explicit `S.m(s)` and type-receiver paths (`statics.rs`,
+    `type_receivers.rs`) for the same gap.
+  - Probe: `assets/ok/{ref_receiver_address_space,origin_unsafe_mut_cast,
+    template_method_value_parameter}.mojo` (`S.first`, `S.sp`,
+    `Cell.hits_of`).
+  - Probe: a place, a temporary (`S().peek()`), and a dereferenced
+    (`p[].peek()`) receiver, and one inside a `ref` function. Add the
+    temporary and dereferenced ones as an `assets/ok` fixture.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R2635 A `VariadicList` construction records an unbound origin**
+
+  Every homogeneous `*args` call builds a `VariadicList` whose register
+  type and call application both hold `_`, where upstream's list is over
+  its element references' origin.
+  - Cause: `build_variadic_list` (`mir/variadics.rs`) writes
+    `Origin::Unbound` in both. The elaborator calls the same builder
+    (`native/mono/substitute.rs`).
+  - Lever: the origin is the element references' (`Untracked { mutable:
+    owned }`, `element_lit_ref_type`), which makes
+    `_EltPointerType._mlir_lit_ref` the array element type the call
+    passes. Change the register type and the application together.
+  - Risk: if the argument check or the loan check rejects the list
+    against the callee's collector type, record that in
+    `docs/call-application-plan.md`. Do not keep `_` in the application.
+  - Probe: `print("hi")`, and 16 stdlib functions.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R2636 A `comptime` alias's bracket hole records `_` in the call's
+  application**
+
+  `first[_, 6]` and `pair[_, 10, 3]` through an alias record the hole as
+  `_`, where upstream's unbound parameter is the call's to infer from its
+  argument.
+  - Unverified cause: a `_` bracket origin shadows the solve's binding in
+    `declared_call_arguments`, or the alias's partial application
+    (`resolve_partial_use_params`) fixes the slot before the call.
+  - If the fix needs R2396's pre-check rewrite, file the site under R2396
+    and add R2396 here.
+  - Probe: `assets/ok/function_bracket_unbound_origin_marker.mojo`.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R2637 A call binds an alias-typed origin binder but not the
+  implicit `mut` and `_mlir_origin` binders its spelling declares**
+
+  `by_origin[o: O](ref[o] x)` over `comptime O = Origin` declares
+  upstream's implicit `$mut_o` and `$_mlir_origin_o` (R2396's alias-typed
+  case), and its call records both as placeholders.
+  - Lever: bind both from `o`'s solved origin, its mutability and the
+    origin itself, as upstream infers them from `o`'s type.
+  - Probe: `assets/ok/comptime_alias_struct_generator.mojo` records
+    `[$mut_o, _, origin_of(…)]`.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R2638 A callable default that reads an earlier binder records its
+  symbol as a placeholder**
+
+  `run_earlier[5]()` over `f: def() thin -> Int = twice[k]` records
+  `ct_deferred(f)`, where upstream's call holds the default's symbol at the
+  call's `k`.
+  - Cause: `omitted_callable_value` (`checker/declarations.rs`) defers a
+    default symbol that reads an earlier binder.
+  - Lever: substitute the call's binding of `k` into the symbol
+    (`twice[5]`), or leave it open over the caller's binder.
+  - Probe: `assets/ok/callable_param_specialized_function.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2639 The verifier accepts a placeholder in a call's compile-time
+  application**
 
   The application check counts arguments, but a slot may still be
   `ct_deferred` or `origin_unbound`, which is neither closed nor open over
-  the caller's binders, so the elaborator cannot substitute it. Upstream's
-  call holds a solved attribute for every declared parameter.
-  - Make the verifier reject a placeholder in a call's application, then
-    fix the checker paths that write one. Probe the stdlib build first to
-    size it, and split by checker path if it is more than one session.
-  - Probe: an implicit conversion to `StringSpan` from a `StringLiteral`
-    (`mut`, `origin`, `$value_lit`), from a `String`, and from a
-    `StringSpan` (`other_origin`).
-  - Probe: `VariadicList.__init__`'s `origin`, and `String.__init__`'s
-    `$value_data` on a conversion.
-  - Probe: each std iterator's `__iter__` construction (`iterable_mut` on
-    `_ListIter`, `_DictKeyIter`, …), and `Span` and `Pointer`
-    constructions.
-  - Probe: `ParamDecl::constructor_call_arguments` pads unspelled own
-    parameters with placeholders.
+  the caller's binders, so the elaborator cannot substitute it.
+  - Rule: after the count in `verify_application` (`mir/verify/calls.rs`),
+    reject a top-level `origin_unbound` slot, and a top-level
+    `ct_deferred` one unless `Mutability::of_mut_argument` names it (the
+    caller-open `$origin_mut` read). A placeholder nested in a type
+    argument is R2640's.
+  - Finding text: "call of 'f' leaves its compile-time argument `o` a
+    placeholder (origin_unbound)".
+  - Run the B1e probe (`docs/call-application-plan.md`) on a stdlib
+    package build first. It must print nothing.
+  - Respell the hand-written `ct_deferred(apply.f)` beside a
+    `param_arg_regs` operand as the nested body's `ct_func_symbol` in
+    `tests/mir_passes/inline-parametric/{generic_kept,
+    capturing_callable_binder}.mir`, keeping their `.expected`.
+  - Tests beside `verify_application`'s: reject `origin_unbound` and an
+    own `ct_deferred`, and accept a `$origin_mut` read, a `ct_expr` binder
+    read, and a closed slot.
+  - Docs: `verify_application` in `docs/architecture.md`, the
+    `ct_deferred` meanings in `docs/mir-text-format.md`, and B1e.
   - Slice B1e of `docs/call-application-plan.md`.
-  - Depends on R2626.
+  - Depends on R2633, R2634, R2635, R2636, R2637, R2638, and R2376
+    (`freeze(other: S)` declares no binder to name its argument's origin).
+  - Model: Opus, Not Planned.
+
+- [ ] **R2640 A call's type argument nests a placeholder**
+
+  A slot is a type whose own arguments still hold `ct_deferred` or
+  `origin_unbound`, which B2's substitution (R2628) cannot close.
+  - Probe: `len[T: Sized]`'s `T = Span[mut, SIMD[…], origin_of(place)]`,
+    a `mut=` left deferred beside a place origin (17 stdlib functions).
+  - Probe: `Writer.write`'s `Ts = StringSpan[mut, _]` from a converted
+    literal in `print`. A conversion's result type is still the expected
+    type (`implicit_conversion_type`), not the instance its application
+    builds.
+  - Probe: `assets/ok/{iterator_bounds,free_iter_function,
+    string_span_equatable,list_from_iterable,std_iter_map,
+    rebind_var_forget_deinit,sequence_starred_forms,
+    pack_element_temporaries}.mojo`.
+  - R2517 (a member over `origin_of(self)`) and R2376 (an unparameterized
+    `StringSpan` parameter) cause some of these. Re-probe after them and
+    fix what remains.
+  - Depends on R2639 (the top-level rule first), R2517, and R2376.
   - Model: Fable, Planned.
 
 - [ ] **R2628 The elaborator infers a call's bindings by unifying types
@@ -110,8 +253,8 @@ slice.
     (`infer_receiver_call`), `inline_parametric`'s
     `subscript_parameter_arguments`, and `call_defaults.rs`'s subscript
     sites, which pass `bindings_of` no application.
-  - Depends on R2631 and R2632 (every call must carry a complete
-    record).
+  - Depends on R2631, R2632, R2639, and R2640 (every call must carry a
+    complete record).
   - Model: Fable, Planned.
 
 - [ ] **R2629 A call may record no operand conventions, and the loan check
@@ -11613,6 +11756,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     Origin[mut=mut]]`) gets an unbound origin and an undecided `mut=`, so
     `t.mut` fails with "'mut' is not a compile-time constant here", where
     the pin prints `False`.
+  - Probe: that `freeze`'s construction records `[mut, $T_other, _,
+    $k_other]` for `S.__init__` (`assets/ok/struct_parameter_reads_through_value.mojo`),
+    two placeholders R2639's rule rejects.
   - Probe: `def g(other: S) -> Bool: return other.mut` over the same `S`
     fails with "'mut' is not a compile-time constant here", where the pin
     prints `True` for `g(S[Int, origin_of(x)]())`. A construction spelling

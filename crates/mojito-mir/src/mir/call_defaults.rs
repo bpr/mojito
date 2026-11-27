@@ -2360,9 +2360,14 @@ fn omitted_argument(
             target,
             arg,
             parameter,
+            instantiated_args,
         } => OmittedDefault::Constant(CheckedConst::Construct {
             target: target.clone(),
             arg: arg.clone(),
+            instantiated_args: instantiated_args
+                .iter()
+                .map(|argument| substitute_argument(argument, &site.bound))
+                .collect::<Result<Vec<_>, _>>()?,
             parameter: parameter
                 .as_ref()
                 .map(|parameter| {
@@ -2484,14 +2489,20 @@ fn evaluate_constant(
             target,
             arg,
             parameter,
+            instantiated_args,
         } => {
             let at = parameter.clone().unwrap_or_else(|| literal_type(arg));
             let argument = evaluate_constant(function, arg, &at, location, declarations, prelude);
             let value = fresh_register(function, ty.clone(), location);
-            // The constructor is owner-less: the call binds the struct's
-            // parameters to the arguments of the type it builds, as a
-            // written conversion's call does, a value for each declared one.
-            let instantiated_args = constructed_arguments(target, ty, declarations);
+            // The call applies its constructor as the checker recorded the
+            // default's conversion, under the call's bindings; a default no
+            // checked conversion recorded binds the struct's parameters to
+            // the arguments of the type it builds.
+            let instantiated_args = if instantiated_args.is_empty() {
+                constructed_arguments(target, ty, declarations)
+            } else {
+                instantiated_args.clone()
+            };
             prelude.push(MirInstr::Call {
                 conventions: crate::mir::MirArgConventions::default(),
                 dest: value,

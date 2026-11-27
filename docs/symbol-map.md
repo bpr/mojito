@@ -2654,7 +2654,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   solves an `@implicit` conversion's own from the source type
   (`Checker::conversion_constructor_parameter`), which
   `record_selected_conversion` records after the struct's prefix in the
-  conversion's instantiation — a
+  conversion's instantiation, the prefix of the instance the constructor
+  builds (`Checker::conversion_constructed`, a view source's place placed
+  by `instance_with_origin`, `checker.rs`), and a converted default
+  carries that record as `CheckedConst::Construct::instantiated_args`,
+  which `call_defaults.rs`'s `omitted_argument` substitutes at each call — a
   construction's own bracket is the type's alone, so the own arguments
   reach MIR only in this record — and
   `infer_call` binds a construction's from its

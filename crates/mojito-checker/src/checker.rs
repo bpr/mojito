@@ -1371,15 +1371,7 @@ impl Checker {
             return Ok(None);
         };
         Ok(Some(mojito_checked::checked::ConversionMaterialization {
-            instantiated_args: self.conversion_instantiation(
-                to,
-                &selected.target,
-                (
-                    &selected.own_decls,
-                    selected.own_arguments,
-                    &selected.own_mutabilities,
-                ),
-            ),
+            instantiated_args: self.conversion_instantiation(&selected, None),
             constructor: selected.target,
             ty: to.clone(),
             reads: !selected.consumes_source,
@@ -2098,15 +2090,7 @@ impl Checker {
         else {
             return Ok(None);
         };
-        let instantiated_args = self.conversion_instantiation(
-            &target,
-            &materialize.target,
-            (
-                &materialize.own_decls,
-                materialize.own_arguments,
-                &materialize.own_mutabilities,
-            ),
-        );
+        let instantiated_args = self.conversion_instantiation(&materialize, None);
         Ok(Some(SelectedConversion {
             materialization: Some(mojito_checked::checked::ConversionMaterialization {
                 constructor: materialize.target,
@@ -2122,50 +2106,121 @@ impl Checker {
         }))
     }
 
-    /// The compile-time arguments the converting constructor `target` of
-    /// `to` takes: `to`'s binder prefix, then the constructor's own
-    /// arguments (declared `own_decls`), over its whole declared list, as
-    /// any construction passes them
-    /// ([`Self::construction_arguments`]).
+    /// The compile-time arguments the conversion `selected` passes its
+    /// converting constructor: the binder prefix of the instance the
+    /// constructor builds, then the constructor's own arguments, over its
+    /// whole declared list, as any construction passes them
+    /// ([`Self::construction_arguments`]). A view constructor's `ref
+    /// [Self.origin]` source (`source`) binds that struct origin to its
+    /// place, as an explicit `StringSpan(s)` does.
     fn conversion_instantiation(
         &self,
-        to: &Ty,
-        target: &str,
-        (own_decls, own_arguments, own_mutabilities): (
-            &[ParamDecl],
-            Vec<TyArg>,
-            &[(ParamId, CtValue)],
-        ),
+        selected: &SelectedConversion,
+        source: Option<&Expr>,
     ) -> Vec<TyArg> {
-        let TyKind::Struct(name, arguments) = to.kind() else {
+        let constructed = &selected.constructed;
+        let TyKind::Struct(name, _) = constructed.kind() else {
             return Vec::new();
         };
-        if to.is_pointer() {
+        if constructed.is_pointer() {
             return Vec::new();
         }
         let Some(info) = self.structs.get(name).filter(|_| {
-            mojito_symbol::symbol::lifecycle_constructor(target)
+            mojito_symbol::symbol::lifecycle_constructor(&selected.target)
                 .is_some_and(|(_, method)| method == "__init__")
         }) else {
             return Vec::new();
         };
+        let constructed = match (selected.borrowed_origin, source) {
+            (Some(id), Some(source)) => self.reference_argument(source).map_or_else(
+                || constructed.clone(),
+                |(origin, lent)| {
+                    instance_with_origin(&info.params, constructed, id, &origin, |decl| {
+                        self.origin_mutability_slot(decl, &origin, lent)
+                    })
+                },
+            ),
+            _ => constructed.clone(),
+        };
+        let Some((_, arguments)) = mojito_types::types::nominal_parts(&constructed) else {
+            return Vec::new();
+        };
         let decls = info.decls();
-        let arguments = info.view_arguments(arguments);
+        let arguments = info.view_arguments(&arguments);
         let arguments = comptime_validation::positional_pack_arguments(&decls, &arguments);
         let solved: Vec<TyArg> = arguments[..decls.len().min(arguments.len())]
             .iter()
             .cloned()
-            .chain(own_arguments)
+            .chain(selected.own_arguments.iter().cloned())
             .collect();
-        let mut instantiated = self.construction_arguments(name, to, own_decls, &solved);
-        for (decl, argument) in info.params.iter().chain(own_decls).zip(&mut instantiated) {
+        let mut instantiated = self.construction_arguments(
+            name,
+            &constructed,
+            (&selected.own_decls, &selected.own_origins),
+            &solved,
+        );
+        for (decl, argument) in info
+            .params
+            .iter()
+            .chain(&selected.own_decls)
+            .zip(&mut instantiated)
+        {
             if let TyArg::Val(CtValue::Deferred(_)) = argument
-                && let Some((_, value)) = own_mutabilities.iter().find(|(id, _)| id == decl.id())
+                && let Some((_, value)) = selected
+                    .own_mutabilities
+                    .iter()
+                    .find(|(id, _)| id == decl.id())
             {
                 *argument = TyArg::Val(value.clone());
             }
         }
         instantiated
+    }
+
+    /// The instance the converting constructor `sig` of `name` builds
+    /// when it converts to `to` with its own origin binders bound to
+    /// `origins`: its refined `out self` (`out self: StaticString`,
+    /// `out self: StringSpan[ImmOrigin(other_origin)]`) under that
+    /// solution, each slot the refinement leaves to the struct's own
+    /// binder `to`'s, as upstream's call of the constructor applies the
+    /// type its result names.
+    fn conversion_constructed(
+        &self,
+        name: &str,
+        sig: &MethodSig,
+        origins: &crate::checker::origins::ConstructorOriginBindings,
+        to: &Ty,
+    ) -> Ty {
+        let (Some(refined), Some(instance)) = (&sig.refined_self, self.self_instance_ty(name))
+        else {
+            return to.clone();
+        };
+        let (Some((_, refinement)), Some((_, binders)), Some((_, target))) = (
+            mojito_types::types::nominal_parts(refined),
+            mojito_types::types::nominal_parts(&instance),
+            mojito_types::types::nominal_parts(to),
+        ) else {
+            return to.clone();
+        };
+        if refinement.len() != target.len() || binders.len() != target.len() {
+            return to.clone();
+        }
+        let arguments = refinement
+            .iter()
+            .zip(binders.iter())
+            .zip(target.iter())
+            .map(|((defined, binder), argument)| match defined {
+                _ if defined == binder => argument.clone(),
+                TyArg::Origin(origin) => {
+                    TyArg::Origin(origins::substitute_origin_params(origin.clone(), &|id| {
+                        origins.tail(id)
+                    }))
+                }
+                TyArg::Val(CtValue::Bool(_)) => defined.clone(),
+                _ => argument.clone(),
+            })
+            .collect();
+        TyKind::Struct(name.to_string(), arguments).into()
     }
 
     /// Whether `sig`'s refined `out self`, with the own origin binders
@@ -2318,6 +2373,11 @@ impl Checker {
                     return None;
                 }
                 let own_mutabilities = self.own_origin_mutabilities(&sig.declared, &origins);
+                let own_origins = origins::declared_origin_binders(&sig.declared)
+                    .filter_map(|id| origins.tail(id).map(|origin| (id, origin)))
+                    .collect::<HashMap<_, _>>();
+                let constructed = self.conversion_constructed(name, sig, &origins, to);
+                let own = (own_arguments, own_mutabilities, own_origins, constructed);
                 if matches!(from.kind(), TyKind::GenericFunc(_))
                     && matches!(parameter.kind(), TyKind::GenericFunc(_))
                 {
@@ -2325,7 +2385,7 @@ impl Checker {
                 }
                 (self.coerces_by_origins(from, &parameter)
                     && literal_admits_parameter(from, &parameter))
-                .then_some((sig, parameter, own_arguments, own_mutabilities))
+                .then_some((sig, parameter, own))
             })
             .collect::<Vec<_>>();
         if matches.is_empty() && parametric_parameter.get() {
@@ -2349,7 +2409,7 @@ impl Checker {
         let exactly = |source: Option<&Ty>| {
             matches
                 .iter()
-                .filter(|(_, parameter, _, _)| source.is_none_or(|source| parameter == source))
+                .filter(|(_, parameter, _)| source.is_none_or(|source| parameter == source))
                 .cloned()
                 .collect::<Vec<_>>()
         };
@@ -2360,7 +2420,7 @@ impl Checker {
             .flat_map(|tier| {
                 let concrete = tier
                     .iter()
-                    .filter(|(_, _, own_arguments, _)| own_arguments.is_empty())
+                    .filter(|(_, _, (own_arguments, ..))| own_arguments.is_empty())
                     .cloned()
                     .collect::<Vec<_>>();
                 [concrete, tier.clone()]
@@ -2369,7 +2429,7 @@ impl Checker {
             .unwrap_or(matches);
         match matches.as_slice() {
             [] => Ok(None),
-            [(sig, parameter, own_arguments, own_mutabilities)] => {
+            [(sig, parameter, (own_arguments, own_mutabilities, own_origins, constructed))] => {
                 let target = selected_method_symbol(
                     name,
                     "__init__",
@@ -2406,6 +2466,13 @@ impl Checker {
                     own_arguments: own_arguments.clone(),
                     own_decls: sig.declared.clone(),
                     own_mutabilities: own_mutabilities.clone(),
+                    own_origins: own_origins.clone(),
+                    constructed: constructed.clone(),
+                    borrowed_origin: source_borrow
+                        .and_then(|_| sig.origin_binders.first())
+                        .and_then(Option::as_ref)
+                        .map(|(id, _)| *id)
+                        .filter(|id| struct_origin_decl(&info.params, *id).is_some()),
                     materialization: None,
                 }))
             }
@@ -2449,6 +2516,10 @@ impl Checker {
         selected: SelectedConversion,
         to: &Ty,
     ) -> Result<(), TypeError> {
+        // A constructor restates its struct's parameters, so the conversion
+        // passes the constructed instance's binder prefix, then the
+        // constructor's own arguments, as any construction does.
+        let instantiation = self.conversion_instantiation(&selected, Some(expression));
         let SelectedConversion {
             target,
             source_borrow,
@@ -2456,10 +2527,8 @@ impl Checker {
             error,
             parameter,
             declared_by_address,
-            own_arguments,
-            own_decls,
-            own_mutabilities,
             materialization,
+            ..
         } = selected;
         let span = expression.source_span();
         // Upstream converts a literal source to the constructor's parameter
@@ -2507,14 +2576,6 @@ impl Checker {
                 self.materialize_borrow_place(expression, mutable)?;
             }
         }
-        // A constructor restates its struct's parameters, so the conversion
-        // passes the converted-to type's binder prefix, then the
-        // constructor's own arguments, as any construction does.
-        let instantiation = self.conversion_instantiation(
-            to,
-            &target,
-            (&own_decls, own_arguments, &own_mutabilities),
-        );
         if !instantiation.is_empty() {
             self.record_at(span.clone()).conversion_instantiation = Some(instantiation);
         }
@@ -3662,6 +3723,47 @@ fn struct_origin_decl(
     struct_origin_decls(params).find_map(|(origin, decl)| (origin == id).then_some(decl))
 }
 
+/// `instance`, an instance of the struct declaring `params`, with the
+/// origin binder `id` bound to `origin` where the instance leaves it
+/// unbound, and the `mut=` binder governing it the value `mutability`
+/// gives that binder where the instance leaves it undecided.
+fn instance_with_origin(
+    params: &[ParamDecl],
+    instance: &Ty,
+    id: mojito_types::origin::OriginParamId,
+    origin: &mojito_types::origin::Origin,
+    mutability: impl Fn(&ParamDecl) -> CtValue,
+) -> Ty {
+    let Some((name, arguments)) = mojito_types::types::nominal_parts(instance) else {
+        return instance.clone();
+    };
+    if arguments.len() != params.len() {
+        return instance.clone();
+    }
+    let governing = match struct_origin_decl(params, id) {
+        Some(ParamDecl::Origin {
+            mutability: mojito_types::types::OriginMutability::Binder(binder),
+            ..
+        }) => Some(&binder.id),
+        _ => None,
+    };
+    let arguments = params
+        .iter()
+        .zip(arguments.iter())
+        .map(|(decl, argument)| match (decl, argument) {
+            (
+                ParamDecl::Origin { origin: slot, .. },
+                TyArg::Origin(mojito_types::origin::Origin::Unbound),
+            ) if *slot == id => TyArg::Origin(origin.clone()),
+            (_, TyArg::Val(CtValue::Deferred(_))) if governing == Some(decl.id()) => {
+                TyArg::Val(mutability(decl))
+            }
+            _ => argument.clone(),
+        })
+        .collect();
+    TyKind::Struct(name.to_string(), arguments).into()
+}
+
 /// How a body's `return` meets its result.
 #[derive(Clone)]
 enum BodyResult {
@@ -3749,6 +3851,15 @@ struct SelectedConversion {
     /// The value each of the constructor's own origin `mut=` binders takes
     /// from the origin the source binds it to.
     own_mutabilities: Vec<(ParamId, CtValue)>,
+    /// The origin each of the constructor's own origin binders takes from
+    /// the source (`other: StringSpan[other_origin]`).
+    own_origins: HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
+    /// The instance the constructor builds
+    /// ([`Checker::conversion_constructed`]).
+    constructed: Ty,
+    /// The struct origin binder the source's `ref [Self.origin]` clause
+    /// binds to the source's place, for a view constructor.
+    borrowed_origin: Option<mojito_types::origin::OriginParamId>,
     /// The materialization of a `@__nonmaterializable` source the
     /// constructor converts the target of.
     materialization: Option<mojito_checked::checked::ConversionMaterialization>,

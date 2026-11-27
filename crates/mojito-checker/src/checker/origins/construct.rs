@@ -1160,7 +1160,10 @@ impl Checker {
     /// [`Self::reference_argument_origin`], with the capability the
     /// argument lends where its reference records one: a pointer
     /// dereference lends the pointer's, not its holder's.
-    fn reference_argument(&self, expression: &Expr) -> Option<(Origin, Option<Mutability>)> {
+    pub(in crate::checker) fn reference_argument(
+        &self,
+        expression: &Expr,
+    ) -> Option<(Origin, Option<Mutability>)> {
         // A `ref [o]` parameter of the enclosing signature lends its binder.
         if let ExprKind::Identifier(name) = &expression.kind
             && let Some((id, _)) = self.lookup_reference_parameter_binder(name)

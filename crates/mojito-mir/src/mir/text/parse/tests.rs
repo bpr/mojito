@@ -3582,6 +3582,57 @@ fn subscript_instantiated_arguments_round_trip_and_read_from_older_artifacts() {
     assert!(!write::program(&empty).contains("instantiated_args"));
 }
 
+/// Schema 1.238 carries a converted default's compile-time application,
+/// written only when it is non-empty; an older artifact's default carries
+/// none.
+#[test]
+fn converted_default_application_round_trips_and_reads_from_older_artifacts() {
+    let program_of = |instantiated_args: Vec<TyArg>| {
+        let mut program = program_with(Vec::new());
+        let mut declaration = inc_declaration();
+        declaration.param_conventions = vec![None];
+        declaration.ref_params = vec![false];
+        declaration.param_writes = vec![false];
+        declaration.defaults = vec![Some(CheckedConst::Construct {
+            target: "StringSpan.__init__".into(),
+            arg: Box::new(CheckedConst::String("x".into())),
+            parameter: None,
+            instantiated_args,
+        })];
+        program.declarations.functions.push(declaration);
+        program
+    };
+    let recorded = |text: &str| {
+        let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+        match &parsed.program.declarations.functions[0].defaults[0] {
+            Some(CheckedConst::Construct {
+                instantiated_args, ..
+            }) => instantiated_args.clone(),
+            other => panic!("expected a converted default, read {other:?}"),
+        }
+    };
+    let application = vec![
+        TyArg::Val(CtValue::Bool(false)),
+        TyArg::Origin(mojito_types::origin::Origin::Static),
+    ];
+    let program = program_of(application.clone());
+    assert_reprints(&program);
+    let written = write::program(&program);
+    assert_eq!(recorded(&written), application);
+
+    let start = written
+        .find(", arguments: [")
+        .expect("the application is written");
+    let end = start + written[start..].find(']').expect("the list closes") + 1;
+    let older = format!("{}{}", &written[..start], &written[end..]);
+    assert!(!older.contains("arguments"), "{written}");
+    assert!(recorded(&older).is_empty());
+
+    let empty = program_of(Vec::new());
+    assert_reprints(&empty);
+    assert!(!write::program(&empty).contains("arguments"));
+}
+
 /// Schema 1.22 carries a method call's own solved compile-time arguments;
 /// an older artifact carries none.
 #[test]

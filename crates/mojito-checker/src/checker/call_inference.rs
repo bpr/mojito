@@ -550,15 +550,7 @@ impl Checker {
         // The constructor's own parameters solved from the value (`String`'s
         // `__init__(data: StringLiteral)` binds the literal's `value`) are
         // its call's arguments, as any conversion passes them.
-        let instantiation = self.conversion_instantiation(
-            &target,
-            &selected.target,
-            (
-                &selected.own_decls,
-                selected.own_arguments,
-                &selected.own_mutabilities,
-            ),
-        );
+        let instantiation = self.conversion_instantiation(&selected, None);
         // A view conversion already recorded at this span supersedes the
         // materialization; re-inferring the expression must not revert it.
         let mut facts = self.record_at(span);

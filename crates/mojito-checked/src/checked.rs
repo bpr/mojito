@@ -5080,6 +5080,15 @@ pub enum CheckedConst {
         /// at before the call, as a written conversion's literal source
         /// does ([`SemanticAdjustment::ConversionSourceLiteral`]).
         parameter: Option<Ty>,
+        /// The compile-time application the checker recorded for the
+        /// default's conversion call
+        /// ([`SemanticAdjustment::ConversionInstantiatedArguments`]), over
+        /// the binders of the declaration holding the default, which each
+        /// call that takes the slot substitutes, as upstream's default is an
+        /// expression whose call carries its own parameter attributes. Empty
+        /// for a constructor that declares no binders.
+        #[serde(default)]
+        instantiated_args: Vec<mojito_types::types::TyArg>,
     },
     /// A default that is neither a folded literal nor a conversion of one
     /// (`String("a")`, `TWO + 1`): MIR lowers the expression as the

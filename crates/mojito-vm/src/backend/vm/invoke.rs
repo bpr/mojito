@@ -95,6 +95,7 @@ impl VmBackend {
                     target,
                     arg,
                     parameter,
+                    ..
                 }) => self.call_named(
                     prog,
                     target,

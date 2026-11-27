@@ -2353,7 +2353,12 @@ origin binder; the call's `instantiated_args` hold a value for every
 parameter of that list, as upstream's call holds an attribute for each:
 the check records each origin binder's solved origin and each `mut=`
 binder's mutability in place (`Checker::declared_call_arguments`), a
-construction's struct origins from the instance it builds, a mutability
+construction's struct origins from the instance it builds, an implicit
+conversion's struct prefix from the instance its constructor builds (its
+refined `out self` under the own solution, a view source's place,
+`Checker::conversion_constructed`), a converted default's the application
+its conversion recorded (`CheckedConst::Construct::instantiated_args`),
+which each call substitutes its bindings into, a mutability
 the caller's binders decide as a read of that binder, and a call MIR
 synthesizes from an instance type takes that instance's arguments, one per
 struct parameter, before its constructor's own
@@ -8698,6 +8703,7 @@ point where a slot declared in a loop is uninitialized again.
   its declaration restates the struct's parameters, so a constructor that
   removed `n` leaves a construction that passes none; an `@implicit`
   conversion passes them the same way (`ConversionInstantiatedArguments`),
+  at the instance the selected constructor builds,
   and `T(copy=x)` over an explicit copy constructor calls
   `T.__copyinit__` with the struct's arguments the same way, since a copy
   or move constructor's declaration restates the struct's parameters too,

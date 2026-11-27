@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An implicit conversion's call now applies the instance its constructor
+  builds, as an explicit construction does, instead of the expected
+  parameter type's unbound `StringSpan[mut, _]`: a literal converts at
+  `StringSpan[False, StaticConstantOrigin]`, a `String` to a view of its
+  place, and a `StringSpan` binds the constructor's own origin. A
+  converted default argument (`sep: StringSpan = " "`) now carries the
+  checker's application for its conversion, substituted at each call. MIR
+  text moves to schema 1.238 (`checked_construct`'s `arguments`) and the
+  package format to `mojito-package 285`. The remaining placeholder slots
+  and the verifier rule that rejects them are R2633–R2640.
+
 - A subscript call now carries its accessor's compile-time application, as
   upstream's subscript is a call of its accessor, and the MIR verifier
   rejects any other count (R2631). A tuple destructuring's element read

@@ -176,11 +176,17 @@ pub(super) fn substitute_declaration(
     }
     for default in decl.defaults.iter_mut().flatten() {
         if let CheckedConst::Construct {
-            parameter: Some(ty),
+            parameter,
+            instantiated_args,
             ..
         } = default
         {
-            *ty = substitute_ty(ty, bindings)?;
+            if let Some(ty) = parameter {
+                *ty = substitute_ty(ty, bindings)?;
+            }
+            for argument in instantiated_args {
+                *argument = substitute_arg(argument, bindings)?;
+            }
         }
     }
     Ok(())

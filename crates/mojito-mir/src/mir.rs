@@ -2345,6 +2345,17 @@ fn mir_default(checked: &CheckedProgram, default: CheckedNodeId) -> Option<Check
                 }
                 _ => None,
             }),
+            instantiated_args: adjustments
+                .iter()
+                .find_map(|adjustment| {
+                    match adjustment {
+                    mojito_checked::checked::SemanticAdjustment::ConversionInstantiatedArguments(
+                        arguments,
+                    ) => Some(arguments.clone()),
+                    _ => None,
+                }
+                })
+                .unwrap_or_default(),
         }),
         None => Some(base),
     }

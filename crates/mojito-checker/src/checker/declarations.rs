@@ -3610,24 +3610,26 @@ impl Checker {
     /// `own`), over the constructor's whole declared list, as the call
     /// binds every declared parameter: the struct prefix is the
     /// `constructed` instance's own arguments
-    /// ([`Self::constructed_prefix`]), then the constructor's.
+    /// ([`Self::constructed_prefix`]), then the constructor's, each own
+    /// origin binder at the origin its argument bound it to
+    /// (`own_origins`).
     pub(super) fn construction_arguments(
         &self,
         name: &str,
         constructed: &Ty,
-        own: &[ParamDecl],
+        (own, own_origins): (
+            &[ParamDecl],
+            &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
+        ),
         arguments: &[TyArg],
     ) -> Vec<TyArg> {
         let Some(info) = self.structs.get(name) else {
             return arguments.to_vec();
         };
         let declared: Vec<ParamDecl> = info.params.iter().chain(own).cloned().collect();
-        let derived = self.declared_call_arguments(
-            &declared,
-            arguments,
-            &Self::constructed_origins(info, name, constructed),
-            None,
-        );
+        let mut origins = Self::constructed_origins(info, name, constructed);
+        origins.extend(own_origins.iter().map(|(id, origin)| (*id, origin.clone())));
+        let derived = self.declared_call_arguments(&declared, arguments, &origins, None);
         Self::constructed_prefix(info, name, constructed, derived)
     }
 

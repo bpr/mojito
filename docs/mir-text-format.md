@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.237
+mojito-mir 1.238
 ```
 
-The writer emits 1.237. The reader accepts 1.0 through 1.237; *Schema 1.0*
+The writer emits 1.238. The reader accepts 1.0 through 1.238; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1438,6 +1438,19 @@ artifact gives every subscript call none, which the verifier then rejects
 for a generic accessor (`verify_application`); the record is not
 upgraded. The package format moves to `mojito-package 284` (R2631).
 
+Schema 1.238 gives a converted default its conversion's application:
+`checked_construct`'s optional `arguments: [<ty_arg>...]`, one per binder
+the converting constructor declares, over the binders of the declaration
+holding the default, as the checker recorded them at the default's
+conversion. Each call that takes the slot substitutes its own bindings
+into them and passes them as the constructor call's `instantiated_args`,
+as upstream's default is an expression whose call carries its own
+parameter attributes. It is written only when non-empty. An older
+artifact's default has none, and its call binds the constructor's struct
+prefix to the parameter type's arguments, padding the constructor's own
+binders with their placeholders. The package format moves to
+`mojito-package 285`.
+
 Schema 1.234 spells a `Pointer`'s provenance as upstream's
 `Pointer[mut, T, origin]` arguments: the `pointer` record is
 `pointer { element, origin, mutability }` (with `address_space` as before),
@@ -2425,7 +2438,8 @@ rational; reprinting reduces it.
 `checked_construct { target, arg }` for an
 implicit-conversion default (schema 1.173 adds an optional
 `parameter: <type>`, the constructor parameter a literal `arg`
-materializes at), and `checked_evaluate("function")` for a
+materializes at, and schema 1.238 an optional `arguments: [ty-arg, ...]`,
+the conversion call's compile-time application), and `checked_evaluate("function")` for a
 default lowered as a function. Schema 1.43 adds the applied form
 `checked_evaluate { function, arguments: [ty-arg, ...] }`: the function's
 own compile-time parameters, in declaration order, written over the

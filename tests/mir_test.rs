@@ -3175,6 +3175,70 @@ fn construction_records_its_constructed_instance_mutability() {
 }
 
 #[test]
+fn conversions_and_converted_defaults_record_the_constructed_instance() {
+    // A conversion applies the instance its constructor builds, as an
+    // explicit construction does: a literal builds a `StaticString`
+    // (`out self: StaticString`), a `String` a view of its place, and a
+    // default `sep: StringSpan = " "` passes its checked conversion's
+    // application, never the parameter type's unbound `StringSpan[mut, _]`.
+    let source = "def take(s: StringSpan) -> Int:\n    return s.byte_length()\n\n\ndef join(a: Int, sep: StringSpan = \" \") -> Int:\n    return a + sep.byte_length()\n\n\ndef main():\n    var s = String(\"abc\")\n    print(take(s), take(\"xy\"), join(1))\n";
+    let compiler = Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile conversions to StringSpan");
+    let main = &compiled
+        .mir()
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered")
+        .1;
+    let applications = |constructor: &str| {
+        main.body
+            .instrs
+            .iter()
+            .filter_map(|instruction| match instruction {
+                MirInstr::Call {
+                    func,
+                    instantiated_args,
+                    ..
+                } if func.0 == constructor => Some(instantiated_args.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    use mojito::ct::CtValue;
+    use mojito::origin::Origin;
+    use mojito::types::TyArg;
+    let literal = |text: &str| {
+        vec![
+            TyArg::Val(CtValue::Bool(false)),
+            TyArg::Origin(Origin::Static),
+            TyArg::Val(CtValue::KgenString(text.to_string())),
+        ]
+    };
+    let literals = applications("StringSpan.__init__$ov$StringLiteral$V$value$lit");
+    assert!(literals.contains(&literal("xy")), "{literals:?}");
+    assert!(literals.contains(&literal(" ")), "{literals:?}");
+    let views = applications("StringSpan.__init__$ov$String");
+    assert!(
+        matches!(
+            views
+                .iter()
+                .map(Vec::as_slice)
+                .collect::<Vec<_>>()
+                .as_slice(),
+            [[
+                TyArg::Val(CtValue::Bool(true)),
+                TyArg::Origin(Origin::Place(_))
+            ]]
+        ),
+        "{views:?}"
+    );
+    assert_eq!(compiler.execute(&compiled).unwrap().output, "3 2 2\n");
+}
+
+#[test]
 fn inferred_generic_method_calls_retain_parameter_declarations() {
     let source = "@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def size[T: Copyable & Movable & Deinitable](self, var **options: T) -> Int:\n        return self.bias + len(options)\n\ndef main():\n    var counter = Counter(10)\n    print(counter.size(left=1, right=2))\n";
     let compiler = Compiler::default().with_snippet_module_scope();
