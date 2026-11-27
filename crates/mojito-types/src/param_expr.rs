@@ -1269,10 +1269,20 @@ impl ParamContext {
                         _ => crate::types::TyArg::Val(arg.clone().into_value()),
                     })
                     .collect();
-                return self.constant(CtValue::FuncSymbol(crate::ct::FuncSymbolRef {
-                    symbol: symbol.symbol.clone(),
-                    arguments,
-                }));
+                // The specialization is a value of its instance's function
+                // type, as the unfolded node is and as
+                // [`Self::constant_as`] types a function's symbol.
+                let instance = crate::types::bind_origin_params(
+                    &crate::types::replace_parameters(self, &ty.result, &bindings, 0)?,
+                    &generator_origins(&ty.params, &args),
+                );
+                return self.constant_typed(
+                    CtValue::FuncSymbol(crate::ct::FuncSymbolRef {
+                        symbol: symbol.symbol.clone(),
+                        arguments,
+                    }),
+                    MetaTy::value(instance),
+                );
             }
             ParamKind::Constant(CtValue::Generator(value)) => {
                 // The body names the value's own binders; its type's are

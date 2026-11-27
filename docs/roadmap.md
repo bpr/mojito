@@ -92,29 +92,6 @@ slice.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2646 A function specialization over a caller's open binders has
-  no parameter-expression form**
-
-  `pick[j, b]()` inside `outer[j: Int, b: Bool]`, over `f: def() thin ->
-  Int = twice[k] if e else twice[0]`, records `ct_deferred(f)`, where
-  upstream's call holds the default's `POC::Cond` over `b` with each arm
-  the symbol at the call's binding (`twice[j]`, `twice[0]`).
-  - Cause: a specialization over open binders is a `ct::FuncSymbolRef`
-    whose arguments hold `ct_expr` values, a `CtValue` rather than a
-    `ParamExpr`. `ParamContext::constant_as` rejects it as not closed, so
-    `callable_default_value` (`checker/declarations.rs`) cannot build the
-    `cond` operand and defers the slot.
-  - Lever: spell the arm as upstream's `#kgen.bind_params` over the
-    function's symbol (`ParamContext::bind_params`), which folds to the
-    closed `ct_func_symbol` once the instance binds `j`.
-  - A decided condition, and an open one whose arms are closed symbols
-    (`increment if e else decrement`), already record their value.
-  - Probe: `print(outer[3, True]() + outer[3, False]())` over `def
-    twice[n: Int]() -> Int: return n * 2` prints `6`; its call's
-    application must hold no `ct_deferred`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2639 The verifier accepts a placeholder in a call's compile-time
   application**
 
@@ -3156,6 +3133,9 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     prints `b.count()`. The pin prints `6`.
   - Probe: upstream's `String._refcount`, a `ref[self._ptr_or_data.origin]
     Atomic[Int]` (R2615 has the restore).
+  - Probe: `assets/ok/generic_function_origin_binder.mojo`'s `first_ref`,
+    returning `s[0]` over `s: Span[T, o]` as `ref[o] T`, fails the same
+    way at `beeb0dfc6` (found while landing R2646).
   - Found while landing R2604 (2026-11-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.

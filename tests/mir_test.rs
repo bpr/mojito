@@ -3473,6 +3473,61 @@ fn callable_default_over_earlier_binders_records_its_symbol_at_the_call() {
 }
 
 #[test]
+fn open_conditional_default_specializing_over_caller_binders_records_bind_params() {
+    // A conditional callable default the call leaves open, whose arm
+    // specializes over the caller's binder (`twice[k]` at `k = j`), is
+    // upstream's `POC::Cond` over `b` with that arm `#kgen.bind_params` over
+    // `twice`'s symbol, which folds to `twice[3]` once `outer[3, True]` binds
+    // `j`. No slot is deferred.
+    use mojito::CtValue;
+    use mojito::param_expr::{ParamKind, ParamOp};
+    use mojito::types::TyArg;
+    let source = "def twice[n: Int]() -> Int:\n    return n * 2\n\ndef pick[k: Int, e: Bool, f: def() thin -> Int = twice[k] if e else twice[0]]() -> Int:\n    return f()\n\ndef outer[j: Int, b: Bool]() -> Int:\n    return pick[j, b]()\n\ndef main():\n    print(outer[3, True]() + outer[3, False]())\n";
+    let compiler = Compiler::default();
+    let compiled = compiler
+        .compile_source(source, Path::new("open_conditional_default.mojo"))
+        .expect("compile an open conditional callable default");
+    let execution = compiler
+        .execute(&compiled)
+        .expect("run an open conditional callable default");
+    assert_eq!(execution.output, "6\n");
+    let applications: Vec<Vec<TyArg>> = compiled
+        .mir()
+        .functions
+        .iter()
+        .filter(|(name, _)| name == "outer")
+        .flat_map(|(_, function)| function.body.instrs.iter())
+        .filter_map(|instruction| match instruction {
+            MirInstr::Call {
+                func,
+                instantiated_args,
+                ..
+            } if func.0 == "pick" => Some(instantiated_args.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(applications.len(), 1, "{applications:?}");
+    let TyArg::Val(CtValue::Expr(cond)) = &applications[0][2] else {
+        panic!("expected a cond over `b`: {applications:?}");
+    };
+    let ParamKind::Op {
+        op: ParamOp::Cond,
+        operands,
+    } = cond.kind()
+    else {
+        panic!("expected a cond over `b`: {cond:?}");
+    };
+    assert!(
+        matches!(operands[1].kind(), ParamKind::BindParams { .. }),
+        "{cond:?}"
+    );
+    assert!(
+        matches!(operands[2].kind(), ParamKind::Constant(CtValue::FuncSymbol(symbol)) if symbol.to_string() == "twice[0]"),
+        "{cond:?}"
+    );
+}
+
+#[test]
 fn alias_bracket_hole_records_the_inferred_origin() {
     // A call through a `comptime` alias that leaves an origin binder open
     // (`first[_, 6]`) is the call of the aliased function at its whole

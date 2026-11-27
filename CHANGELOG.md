@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A conditional callable default the call leaves open whose arm
+  specializes over the caller's binders (`twice[k] if e else twice[0]` at
+  `pick[j, b]()`) is now recorded in the call's application as a `cond`
+  over `b`, that arm upstream's `#kgen.bind_params` over `twice`'s symbol,
+  instead of as a `ct_deferred` placeholder (R2646). A closed binding of a
+  function's symbol now folds to a constant typed by the instance's
+  signature. Output is unchanged.
+
 - An omitted callable default that reads earlier binders
   (`f: def() thin -> Int = twice[k]`) is now recorded in the call's
   application at the call's binding of them (`twice[5]` at

@@ -2033,6 +2033,35 @@ impl Checker {
         FuncSymbolRef { symbol, arguments }
     }
 
+    /// The generic signature of the module function lowered as `symbol`,
+    /// one candidate of its overload set when overloaded: the generator
+    /// type a `#kgen.bind_params` over its symbol binds. `None` for a
+    /// non-generic function, a method, or a name a nearer binding shadows.
+    fn generic_function_ty(&self, symbol: &str) -> Option<Ty> {
+        let Some(mojito_symbol::symbol::OverloadFamily::Free(base)) =
+            mojito_symbol::symbol::overload_family(symbol)
+        else {
+            return None;
+        };
+        if self.binding_scope(base) != Some(0) {
+            return None;
+        }
+        let ty = self.lookup(base)?;
+        match ty.kind() {
+            TyKind::GenericFunc(_) if base == symbol => Some(ty.clone()),
+            TyKind::Overload(candidates) => candidates
+                .iter()
+                .find(|candidate| {
+                    candidate.as_generic_func().is_some()
+                        && super::overload_support::callable_lowered_name(base, candidate)
+                            .as_deref()
+                            == Some(symbol)
+                })
+                .cloned(),
+            _ => None,
+        }
+    }
+
     /// Method `m`'s `where` clauses that read none of its arguments, or
     /// those that do (`where self.dtype.is_integral()`) when
     /// `reading_arguments` holds, each compiled once in the caller's scope
@@ -5195,8 +5224,8 @@ impl Checker {
                     } else if callable_default.is_some() {
                         let value = omitted_callable_value(
                             &self.param_context,
-                            decls,
-                            decl,
+                            &|symbol| self.generic_function_ty(symbol),
+                            (decls, decl),
                             (&value_environment, &subst),
                         );
                         tyargs.push(TyArg::Val(value));
@@ -6915,13 +6944,16 @@ fn substituted_own_decl(decl: &ParamDecl, struct_subst: &TySubst) -> ParamDecl {
 /// `j`); the value the earlier callable parameter it repeats took (a symbol
 /// or an enclosing binder's reference); or the arm a condition the call
 /// decides selects, as the pin keys `S[f = seven]` by
-/// `#kgen.func.symbol<@seven>`. A condition the call leaves open, a repeat
-/// of a deferred slot, and a specialization over a binder the use leaves
-/// unbound stay deferred for the elaborator's defaults.
+/// `#kgen.func.symbol<@seven>`. A condition the call leaves open is
+/// upstream's `POC::Cond` over its arms, an arm specializing over the
+/// caller's binders `#kgen.bind_params` over its function's symbol, which
+/// `generic` types. A repeat of a deferred slot, and a specialization over a
+/// binder the use leaves unbound, stay deferred for the elaborator's
+/// defaults.
 fn omitted_callable_value(
     params: &mojito_types::param_expr::ParamContext,
-    decls: &[ParamDecl],
-    decl: &ParamDecl,
+    generic: &dyn Fn(&str) -> Option<Ty>,
+    (decls, decl): (&[ParamDecl], &ParamDecl),
     bound: (&HashMap<String, CtValue>, &TySubst),
 ) -> CtValue {
     match decl {
@@ -6929,7 +6961,7 @@ fn omitted_callable_value(
             callable_default: Some(default),
             ty,
             ..
-        } => callable_default_value(params, decls, (default, ty), bound),
+        } => callable_default_value(params, generic, decls, (default, ty), bound),
         _ => None,
     }
     .unwrap_or_else(|| CtValue::Deferred(decl.binder()))
@@ -6959,6 +6991,7 @@ fn environment_bindings(
 /// leaves it open.
 fn callable_default_value(
     params: &mojito_types::param_expr::ParamContext,
+    generic: &dyn Fn(&str) -> Option<Ty>,
     decls: &[ParamDecl],
     (default, ty): (&CallableDefault, &Ty),
     (environment, subst): (&HashMap<String, CtValue>, &TySubst),
@@ -6988,7 +7021,7 @@ fn callable_default_value(
             else_value,
         } => {
             let arm = |arm: &CallableDefault| {
-                callable_default_value(params, decls, (arm, ty), (environment, subst))
+                callable_default_value(params, generic, decls, (arm, ty), (environment, subst))
             };
             match condition.evaluate_named(environment) {
                 Ok(CtValue::Bool(true)) => arm(then_value),
@@ -7003,6 +7036,11 @@ fn callable_default_value(
                     let bindings = environment_bindings(params, decls, environment);
                     let operand = |value: CtValue| match value {
                         CtValue::Expr(expr) => Some(expr),
+                        CtValue::FuncSymbol(ref symbol)
+                            if mojito_types::types::ct_value_is_symbolic(&value) =>
+                        {
+                            open_specialization(params, generic, symbol)
+                        }
                         value => params.constant_as(value, ty).ok(),
                     };
                     let operands = [
@@ -7018,6 +7056,34 @@ fn callable_default_value(
             }
         }
     }
+}
+
+/// The specialization `symbol` over the caller's open binders (`twice[j]`)
+/// as a parameter expression: upstream's `#kgen.bind_params` over the
+/// function's symbol, typed by its generic signature `generic` gives, which
+/// folds to the closed `#kgen.func.symbol` once an instance binds them.
+fn open_specialization(
+    params: &mojito_types::param_expr::ParamContext,
+    generic: &dyn Fn(&str) -> Option<Ty>,
+    symbol: &FuncSymbolRef,
+) -> Option<ParamExpr> {
+    let ty = generic(&symbol.symbol)?;
+    let decls = &ty.as_generic_func()?.decls;
+    if decls.len() != symbol.arguments.len() {
+        return None;
+    }
+    let args = decls
+        .iter()
+        .zip(&symbol.arguments)
+        .map(|(decl, argument)| params.argument_expr(decl, argument).ok().map(Some))
+        .collect::<Option<Vec<_>>>()?;
+    let generator = params
+        .constant_typed(
+            CtValue::FuncSymbol(FuncSymbolRef::bare(&symbol.symbol)),
+            mojito_types::param_expr::MetaTy::value(ty.clone()),
+        )
+        .ok()?;
+    params.bind_params(&generator, &args).ok()
 }
 
 /// Whether the call binds each of `decls` that `value` reads: a type binder
@@ -7315,8 +7381,8 @@ impl Checker {
             {
                 TyArg::Val(omitted_callable_value(
                     &self.param_context,
-                    decls,
-                    decl,
+                    &|symbol| self.generic_function_ty(symbol),
+                    (decls, decl),
                     (&value_environment, &subst),
                 ))
             } else if let ParamDecl::Value {
