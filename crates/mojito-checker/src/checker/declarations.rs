@@ -1423,6 +1423,14 @@ impl Checker {
                 binder
             }
         };
+        // An origin binder holds no default to bind it where a call infers
+        // none (`o: ImmOrigin = ImmutAnyOrigin`), as upstream's does.
+        if tp.default.is_some() {
+            return Err(TypeError::Unsupported(format!(
+                "a default for origin parameter '{}'",
+                tp.name
+            )));
+        }
         let (mutability, lit, mlir_origin) = match mutability {
             OriginBinderType::Origin(mutability, mlir_origin) => (mutability, false, mlir_origin),
             OriginBinderType::Lit(mutability) => (mutability, true, None),

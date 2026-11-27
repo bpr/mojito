@@ -1283,7 +1283,12 @@ or value's signature through `bind_bracket_origins`, a `_` leaving its
 origin binder to the call's one solve, `resolve_call_params`, which binds
 the declared list's open origin binders from the places its arguments lend
 (`bind_callee_origins` over `CalleeBinders::Declared`) beside its type and
-value binders and records each such `_`'s attribute as the origin it bound;
+value binders and records each such `_`'s attribute as the origin it bound,
+and rejects an origin binder (or the `mut=` binder governing one) that
+neither its bracket nor its arguments bind and no parameter names, as
+upstream fails to infer it, in upstream's words
+(`reject_uninferred_origins` over `uninferred_origin_parameter`, which a
+construction and a static call through a bare struct name share);
 a method call's bracket binds
 its method's whole declared list (`MethodSig::declared`) the same way in
 `instantiate_method_generics`, which substitutes the bound origins into the

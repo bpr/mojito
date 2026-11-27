@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1356
+# swept-count	1365
 assets/type_error/address_space_unknown_leading_dot.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/address_space_unknown_name.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/atomic_bool_has_no_load.mojo	compile-reject	agree	error: no matching method in call to 'load'
@@ -42,6 +42,12 @@ assets/type_error/atomic_load_not_atomic_syncscope.mojo	compile-reject	agree	err
 assets/type_error/atomic_load_release_ordering.mojo	compile-reject	agree	error: 'pop.load' op invalid atomic ordering 'release' for load operation. Valid orderings are: unordered, monotonic, acquire, seq_cst
 assets/type_error/atomic_rmw_unordered_ordering.mojo	compile-reject	agree	error: failed to lower module to LLVM IR for archive compilation, translate module to LLVMIR failed
 assets/type_error/atomic_store_acquire_ordering.mojo	compile-reject	agree	error: 'pop.store' op invalid atomic ordering 'acquire' for store operation. Valid orderings are: unordered, monotonic, release, seq_cst
+assets/type_error/call_bare_origin_binder_uninferred.mojo	compile-reject	agree	error: invalid call to 'f': failed to infer parameter 'mut'
+assets/type_error/call_bracket_mut_leaves_origin_uninferred.mojo	compile-reject	agree	error: invalid call to 'f': failed to infer parameter 'origin_of(_mlir_origin)'
+assets/type_error/call_imm_origin_binder_uninferred.mojo	compile-reject	agree	error: invalid call to 'h': failed to infer parameter 'origin_of(_mlir_origin)'
+assets/type_error/call_mut_binder_uninferred.mojo	compile-reject	agree	error: invalid call to 'f': failed to infer parameter 'm'
+assets/type_error/call_raw_origin_binder_uninferred.mojo	compile-reject	agree	error: invalid call to 'by_r': failed to infer parameter 'origin_of(r)'
+assets/type_error/call_sibling_origin_binder_uninferred.mojo	compile-reject	agree	error: invalid call to 'f': failed to infer parameter 'origin_of(_mlir_origin)'
 assets/type_error/construction_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/construction_field_pointer_not_owner_origin.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/construction_struct_tail_field_not_owner_origin.mojo	compile-reject	agree	error: no matching function in initialization
@@ -54,10 +60,12 @@ assets/type_error/function_bracket_ref_field_not_owner_origin.mojo	compile-rejec
 assets/type_error/function_type_bound_then_trait.mojo	compile-reject	agree	error: invalid call to '__and__': value passed to 'self' cannot be converted from type value 'Int' to an instance of 'Int'; did you mean to instantiate 'Int'?
 assets/type_error/getattr_param_assignment.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/implicit_constructor_own_origin_binder_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'V[Int, origin_of(y)]' value to 'V[Int, origin_of(x)]'
+assets/type_error/indirect_call_origin_binder_uninferred.mojo	compile-reject	agree	error: invalid indirect call: failed to infer parameter 'origin_of(_mlir_origin)'
 assets/type_error/lit_origin_rejects_non_bool_mutability.mojo	compile-reject	agree	error: invalid MLIR type: !lit.origin<#lit.struct.extract<:!lit.struct<@std::@simd::@SIMD<:!lit.struct<@std::@builtin::@dtype::@DType> {:dtype index}, :!lit.struct<@std::@builtin::@simd_length::@SIMDLength> {1}>> n, "_mlir_value"> : !kgen.scalar<index>>
 assets/type_error/method_bracket_origin_mismatch_struct_parameter.mojo	compile-reject	agree	error: invalid call to 'view': value passed to 'p' cannot be converted from 'Pointer[Int, origin_of(b)]' to 'Pointer[Int, origin_of(a)]'
 assets/type_error/method_bracket_origin_ref_result_aliases_mut_argument.mojo	compile-reject	agree	error: aliasing values passed mutably to 'a' argument and passed mutably to 'b' argument in 'bump' call
 assets/type_error/method_bracket_unbound_origin_uninferred.mojo	compile-reject	agree	error: invalid call to 'f': failed to infer parameter 'origin_of(_mlir_origin)'
+assets/type_error/method_origin_binder_uninferred.mojo	compile-reject	agree	error: invalid call to 'm': failed to infer parameter 'origin_of(_mlir_origin)'
 assets/type_error/method_self_mut_origin_binder_rejects_immutable.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 't' cannot be converted from 'ImmOrigin' to 'MutOrigin'
 assets/type_error/method_self_mut_origin_binder_symbolic_receiver.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 't' cannot be converted from 'MutOrigin' to 'Origin[mut=mut]'
 assets/type_error/mlir_origin_to_origin_slot.mojo	compile-reject	agree	error: value passed to 'o' cannot be converted from 'LITMutOrigin' to 'ImmOrigin', it depends on an unresolved parameter '$0'
@@ -102,6 +110,7 @@ assets/type_error/pointer_write_immutable_rejected.mojo	compile-reject	agree	err
 assets/type_error/pointer_write_nontrivial_pointee.mojo	compile-reject	agree	error: invalid call to 'write': violated constraint
 assets/type_error/result_initializer_origin_mut_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/result_initializer_parameter_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/static_call_struct_origin_uninferred.mojo	compile-reject	agree	error: invalid call to 'k': failed to infer parameter 'origin_of(_mlir_origin)' of parent struct 'V'
 assets/type_error/struct_comptime_mlir_origin_not_int.mojo	compile-reject	agree	error: cannot implicitly convert 'LITImmOrigin' value to 'Int'
 assets/type_error/struct_mutable_origin_without_converting_constructor.mojo	compile-reject	agree	error: invalid call to 'imm': value passed to 'v' cannot be converted from 'View[origin_of(x)]' to 'View[o]'
 assets/type_error/struct_not_deinitable_reason_abandoned.mojo	compile-reject	agree	error: 's' abandoned without being explicitly destroyed: call close() instead

@@ -156,6 +156,67 @@ pub(in crate::checker) fn bracket_mutable_binders<'a>(
         .collect()
 }
 
+/// The parameter of `decls`, a callee's or a struct's whole declared list,
+/// that upstream reports first as failing to infer among its origin binders
+/// and their `mut=` binders, spelled as upstream spells it: a `mut=` binder
+/// `m` no bracket (`value_bound`), default, or bound sibling decides by its
+/// name; a bare `o: Origin`'s implicit one as `mut`; a raw binder `r` (`r:
+/// _lit_origin_type_of_mut[m]`) as `origin_of(r)`; and any other origin
+/// binder as its type's implicit `origin_of(_mlir_origin)`. An origin
+/// binder is bound when `origin_bound` holds of it, and a raw one also when
+/// the sibling naming it as its `_mlir_origin` is. An `OriginSet` binder,
+/// which a capturing callable's environment binds, is never reported.
+pub(in crate::checker) fn uninferred_origin_parameter(
+    decls: &[ParamDecl],
+    origin_bound: &dyn Fn(OriginParamId) -> bool,
+    value_bound: &dyn Fn(&mojito_types::param_expr::ParamId) -> bool,
+) -> Option<String> {
+    use mojito_types::types::OriginMutability;
+    let bound = |id: OriginParamId| {
+        origin_bound(id) || ParamDecl::raw_origin_source(decls, id).is_some_and(origin_bound)
+    };
+    let governs_bound = |binder: &mojito_types::param_expr::ParamId| {
+        decls.iter().any(|decl| {
+            matches!(decl, ParamDecl::Origin {
+                origin,
+                mutability: OriginMutability::Binder(governor),
+                ..
+            } if governor.id == *binder && bound(*origin))
+        })
+    };
+    // An alias-typed binder's implicit `$mut_o` is spelled as upstream's
+    // `Origin` declares it.
+    let spelled = |name: &str| {
+        mojito_ast::ast::auto_binder_owner(name, "mut")
+            .map_or_else(|| name.to_string(), |_| "mut".to_string())
+    };
+    decls.iter().find_map(|decl| match decl {
+        ParamDecl::Value {
+            id, name, default, ..
+        } if decl.is_origin_mutability_binder(decls) => {
+            (default.is_none() && !value_bound(id) && !governs_bound(id)).then(|| spelled(name))
+        }
+        ParamDecl::Origin {
+            mutability: OriginMutability::Set,
+            ..
+        } => None,
+        ParamDecl::Origin { origin, .. } if bound(*origin) => None,
+        ParamDecl::Origin {
+            name, lit: true, ..
+        } => Some(format!(
+            "origin_of({})",
+            mojito_ast::ast::auto_binder_owner(name, "_mlir_origin")
+                .map_or(name.as_str(), |_| "_mlir_origin")
+        )),
+        ParamDecl::Origin {
+            mutability: OriginMutability::Binder(binder),
+            ..
+        } if binder.is_unbound() && !value_bound(&binder.id) => Some("mut".to_string()),
+        ParamDecl::Origin { .. } => Some("origin_of(_mlir_origin)".to_string()),
+        _ => None,
+    })
+}
+
 impl ConstructorOriginBindings {
     /// Substitute the bound binders into a parameter or field type
     /// ([`substitute_struct_origins`]).
@@ -626,9 +687,8 @@ impl Checker {
     /// the origins the application (`bracket`) and the arguments bound in
     /// place. An origin binder neither the application spells nor the
     /// arguments bound fails to infer, as upstream infers a parent struct's
-    /// parameters from the initializer's arguments alone, naming the
-    /// binder's `mut=` binder where one governs it, as upstream infers that
-    /// first.
+    /// parameters from the initializer's arguments alone, named in
+    /// upstream's words ([`uninferred_origin_parameter`]).
     pub(in crate::checker) fn constructed_type(
         &self,
         name: &str,
@@ -640,35 +700,32 @@ impl Checker {
             Some(info) => {
                 let bound =
                     bindings.bind_origins(info.origin_decls().map(|(id, _)| id), &bracket.origins);
-                if let Some((_, decl)) = bound
-                    .iter()
-                    .zip(info.origin_decls())
-                    .find(|(origin, (id, decl))| {
-                        matches!(origin, Origin::Unbound)
-                            && !decl.is_origin_set()
-                            && !bracket
-                                .explicit
-                                .origins()
-                                .iter()
-                                .any(|spelled| spelled.id == *id)
-                    })
-                    .map(|(_, slot)| slot)
-                {
-                    let binder = match decl {
-                        ParamDecl::Origin {
-                            mutability: mojito_types::types::OriginMutability::Binder(binder),
-                            ..
-                        } => info
-                            .params
+                let origin_bound = |id: OriginParamId| {
+                    bracket
+                        .explicit
+                        .origins()
+                        .iter()
+                        .any(|spelled| spelled.id == id)
+                        || bound
                             .iter()
-                            .find(|candidate| *candidate.id() == binder.id)
-                            .map_or_else(|| decl.name(), ParamDecl::name),
-                        _ => decl.name(),
-                    };
+                            .zip(info.origin_decls())
+                            .any(|(origin, (slot, _))| {
+                                slot == id && !matches!(origin, Origin::Unbound)
+                            })
+                };
+                if let Some((_, decl)) = info
+                    .origin_decls()
+                    .find(|(id, decl)| !decl.is_origin_set() && !origin_bound(*id))
+                {
+                    let parameter =
+                        uninferred_origin_parameter(&info.params, &origin_bound, &|binder| {
+                            bracket.mutabilities.iter().any(|(id, _)| id == binder)
+                        })
+                        .unwrap_or_else(|| decl.name().to_string());
                     return Err(TypeError::BadCall {
                         func: name.to_string(),
                         reason: format!(
-                            "failed to infer parameter '{binder}' of parent struct '{name}'"
+                            "failed to infer parameter '{parameter}' of parent struct '{name}'"
                         ),
                     });
                 }

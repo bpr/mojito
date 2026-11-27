@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2647**.
+Next free ID: **R2650**.
 
 ## Ordered Work
 
@@ -9708,40 +9708,57 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2439 A call runs with an origin binder neither its bracket nor
-  its arguments bind**
+- [ ] **R2647 A call never binds or checks an `OriginSet` binder**
 
-  `f(1)` over `def f[o: Origin](x: Int)` prints `1`, where the pin
-  reports "invalid call to 'f': failed to infer parameter 'mut'".
-  - A construction rejects the same shape ("failed to infer parameter
-    'mut' of parent struct"), but `resolve_call_params`
-    (`call_inference.rs`) leaves an open origin binder no argument
-    names unbound.
-  - Lever: report the unbound binder as the construction path does, in
-    the pin's words.
-  - Probe: `f(Pointer(to=y))` over `def f[m: Bool, //, o: Origin[mut=m],
-    t: Origin[mut=m]](p: Pointer[Int, o])` prints `4`, where the pin
-    reports "failed to infer parameter 'origin_of(_mlir_origin)'".
-  - Probe: `V(q)` over a `V` whose initializer declares its own
-    `[t: Origin[mut=Self.m]]` runs, where the pin reports "no matching
-    function in initialization".
-  - Probe: `g()` over `comptime g = f[_, 7]` and `def f[o: ImmOrigin, n:
-    Int]() -> Int` prints `7`, where the pin reports "invalid indirect
-    call: failed to infer parameter 'origin_of(_mlir_origin)'". The
-    call's application records `origin_unbound` for `o`.
-  - Probe: `by_r(n)` over `def by_r[m: Bool, r:
-    _lit_origin_type_of_mut[m], //, o: Origin[mut=m]](ref[o] x: Int) ->
-    Bool: return m` stops at elaboration ("cannot resolve parameter
-    `m`"), where the pin reports "failed to infer parameter
-    'origin_of(r)'". No sibling names `r` as its `_mlir_origin`, so the
-    call correctly leaves it unbound.
-  - Probe: `h()` over `def h[o: ImmOrigin]() -> Int` prints `3`, where the
-    pin reports "invalid call to 'h': failed to infer parameter
-    'origin_of(_mlir_origin)'".
-  - Probe: `run(f[_, 7])` over `def run(g: def[o: ImmOrigin]() thin ->
-    Int) -> Int: return g()` prints `7`, where the pin rejects `g()` the
-    same way.
-  - Found while landing R2428 (2026-11-20).
+  `f(1)` over `def f[o: OriginSet](x: Int)` prints `1`, where the pin
+  reports "invalid call to 'f': failed to infer parameter 'o'".
+  - Cause: Mojito models an `OriginSet` binder as a semantic parameter
+    only a capturing callable's environment fills, so
+    `declared_origin_binders` (`origins/construct.rs`) leaves it out of
+    the call's solve and `uninferred_origin_parameter` never reports it.
+  - Lever: bind it from the argument whose callable type names it, and
+    report it under its own name when none does, as the pin does.
+  - Probe: the call above.
+  - R2383 (an explicitly supplied one is rejected in the wrong words)
+    shares the cause.
+  - Found while landing R2439 (2026-11-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2648 An origin binder cannot declare a default**
+
+  `def f[o: ImmOrigin = ImmutAnyOrigin]() -> Int` is rejected at its
+  declaration ("unsupported feature: a default for origin parameter
+  'o'"), where the pin binds `o` to the default when `f()` infers none.
+  - Cause: `ParamDecl::Origin` (`mojito-types/src/types.rs`) has no
+    default, so `origin_binder_decl` (`checker/declarations.rs`) refuses
+    one rather than drop it.
+  - Lever: carry the default origin on the binder, bind it where the call
+    infers none, and count it bound in `uninferred_origin_parameter`.
+  - Probe: the declaration above, called as `f()`.
+  - Found while landing R2439 (2026-11-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2649 A static call never binds its struct's origin binders from
+  its arguments**
+
+  `V.mk(Pointer(to=y))` over `struct V[o: ImmOrigin]` with `@staticmethod
+  def mk(p: Pointer[Int, Self.o]) -> Int` is rejected ("invalid call to
+  'V.mk': no overload matches the supplied arguments"), where the pin
+  binds `o` from `p` and prints `5`.
+  - Cause: `static_struct_arguments` (`method_calls/statics.rs`) solves
+    only the struct's argument binders (`resolve_explicit_use_params`),
+    so an origin binder the application leaves open stays unbound and
+    the argument fails to convert.
+  - A `ref [Self.o]` argument already binds it
+    (`assets/ok/static_call_origin_application.mojo`).
+  - Lever: bind the open struct origin binders from the arguments'
+    places, as `bind_callee_origins` does a callee's own.
+  - Probe: the call above.
+  - Probe: `W[Int].mk(Pointer(to=y))` over `struct W[T: AnyType, o:
+    ImmOrigin]` with the same static fails the same way.
+  - Found while landing R2439 (2026-11-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10076,6 +10093,10 @@ retained on purpose and re-probed rather than fixed; they are listed in
     and `g.view[origin_of(a)](Pointer(to=b))` reports it where the pin
     reports the conversion of `p`
     (`method_bracket_origin_mismatch_struct_parameter.mojo`).
+  - Probe: `S().m()` over a single `def m[o: ImmOrigin](self) -> Int`
+    reports "no overload matches", where the pin reports "failed to infer
+    parameter 'origin_of(_mlir_origin)'"
+    (`assets/type_error/method_origin_binder_uninferred.mojo`).
   - Probe: `S().f[t=MutUntrackedOrigin](q)` over a single `def f[m:
     Bool, //, o: Origin[mut=m], t: Origin[mut=m]](self, p: Pointer[Int,
     o])` with an immutable `q` reports "no overload matches", where the

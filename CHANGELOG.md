@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call that leaves an origin binder unbound — neither its bracket nor
+  its arguments bind it, and no parameter names it — is now rejected as
+  upstream fails to infer it, instead of running (R2439): `f(1)` over
+  `def f[o: Origin](x: Int)` reports "failed to infer parameter 'mut'",
+  and `h()` over `def h[o: ImmOrigin]()` "failed to infer parameter
+  'origin_of(_mlir_origin)'". The rule covers free and method calls,
+  calls through callable values, and statics through a bare struct name
+  (`V.k()` over `struct V[o: ImmOrigin]`). A construction's message now
+  names the parameter the same way. An origin binder's default, which
+  used to be dropped silently, is refused at its declaration (R2648).
+
 - A conditional callable default the call leaves open whose arm
   specializes over the caller's binders (`twice[k] if e else twice[0]` at
   `pick[j, b]()`) is now recorded in the call's application as a `cond`

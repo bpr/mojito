@@ -852,6 +852,9 @@ impl Checker {
                 actuals.push(self.infer(&kwargs[position].value)?);
             }
         }
+        if receiver.is_none() {
+            self.reject_uninferred_struct_origins(sname, method, bracket, (&patterns, sig))?;
+        }
         // A receiver bound to its instance solves the struct's parameters
         // as a construction's instance does.
         let (patterns, actuals) =
@@ -864,6 +867,60 @@ impl Checker {
             &patterns,
             &actuals,
         )
+    }
+
+    /// Reject a static call through `sname` whose application (`bracket`)
+    /// leaves an origin binder of the struct unbound that neither a
+    /// parameter type the call's arguments bind (`patterns`) nor a `ref
+    /// [Self.o]` convention of the method (`sig`) names, as upstream fails
+    /// to infer a parent struct's parameter the call's arguments cannot
+    /// bind, in upstream's words
+    /// ([`crate::checker::origins::uninferred_origin_parameter`]).
+    pub(super) fn reject_uninferred_struct_origins(
+        &self,
+        sname: &str,
+        method: &str,
+        bracket: &crate::checker::type_resolution::StructBracket,
+        (patterns, sig): (&[Ty], &MethodSig),
+    ) -> Result<(), TypeError> {
+        let Some(info) = self.structs.get(sname) else {
+            return Ok(());
+        };
+        let origin_bound = |id: mojito_types::origin::OriginParamId| {
+            bracket
+                .explicit
+                .origins()
+                .iter()
+                .any(|spelled| spelled.id == id)
+                || bracket
+                    .origins
+                    .iter()
+                    .zip(info.origin_decls())
+                    .any(|(origin, (slot, _))| {
+                        slot == id && !matches!(origin, mojito_types::origin::Origin::Unbound)
+                    })
+                || patterns.iter().any(|pattern| {
+                    crate::checker::origins::names_origin_binder_in(pattern, &|named| named == id)
+                })
+                || sig
+                    .origin_binders
+                    .iter()
+                    .flatten()
+                    .any(|(binder, _)| *binder == id)
+        };
+        crate::checker::origins::uninferred_origin_parameter(
+            &info.params,
+            &origin_bound,
+            &|binder| bracket.mutabilities.iter().any(|(id, _)| id == binder),
+        )
+        .map_or(Ok(()), |parameter| {
+            Err(TypeError::BadCall {
+                func: method.to_string(),
+                reason: format!(
+                    "failed to infer parameter '{parameter}' of parent struct '{sname}'"
+                ),
+            })
+        })
     }
 }
 

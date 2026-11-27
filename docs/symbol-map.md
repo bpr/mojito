@@ -879,7 +879,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   immutable argument origin for a binder whose `mut=` binder the bracket
   fixed to `True` (`check_bracket_fixed_mutability`, over
   `bracket_mutable_binders`, which `bind_constructor_origins` reads for a
-  construction's bracket too), a function
+  construction's bracket too), and rejecting an origin binder no bracket,
+  argument place, or parameter type binds (`reject_uninferred_origins`),
+  named as upstream names it by `uninferred_origin_parameter`
+  (`origins/construct.rs`: `mut`, a `mut=` binder's name, `origin_of(r)`,
+  or `origin_of(_mlir_origin)`), which `constructed_type` and a bare-name
+  static call (`reject_uninferred_struct_origins`, `statics.rs`) share for
+  a parent struct's, a function
   value whose open parameters are only origins included, since its type is
   the generator over them, and
   `ConstructorOriginBindings::substitute_ref_sig` carries the bindings, and

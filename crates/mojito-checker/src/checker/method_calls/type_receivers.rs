@@ -483,7 +483,22 @@ impl Checker {
         // Preserve established overload diagnostics: a retained constraint
         // message replaces `NoMatch` only when this is the sole callable shape.
         let single_candidate = signatures.iter().filter(|sig| !sig.has_self).count() == 1;
+        // A struct declaring only origin binders binds none from a bare
+        // name: a static no argument of which names one fails to infer it.
+        let bracket = info
+            .origin_decls()
+            .any(|(_, decl)| !decl.is_origin_set())
+            .then(|| self.struct_bracket(sname, &[]))
+            .transpose()?;
         for sig in signatures.iter().filter(|sig| !sig.has_self) {
+            if let Some(Err(error)) = bracket.as_ref().map(|bracket| {
+                self.reject_uninferred_struct_origins(sname, method, bracket, (&sig.params, sig))
+            }) {
+                if single_candidate {
+                    rejection = Some(error);
+                }
+                continue;
+            }
             let instantiated = match self.instantiate_method_generics(
                 &format!("{sname}.{method}"),
                 sig,
