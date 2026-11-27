@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2666**.
+Next free ID: **R2667**.
 
 ## Ordered Work
 
@@ -92,38 +92,6 @@ slice.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2639 The verifier accepts a placeholder in a call's compile-time
-  application**
-
-  The application check counts arguments, but a slot may still be
-  `ct_deferred` or `origin_unbound`, which is neither closed nor open over
-  the caller's binders, so the elaborator cannot substitute it.
-  - Rule: after the count in `verify_application` (`mir/verify/calls.rs`),
-    reject a top-level `origin_unbound` slot, and a top-level
-    `ct_deferred` one unless `Mutability::of_mut_argument` names it (the
-    caller-open `$origin_mut` read). A placeholder nested in a type
-    argument is R2640's.
-  - Finding text: "call of 'f' leaves its compile-time argument `o` a
-    placeholder (origin_unbound)".
-  - Run the B1e probe (`docs/call-application-plan.md`) on a stdlib
-    package build first. It must print nothing.
-  - Respell the hand-written `ct_deferred(apply.f)` beside a
-    `param_arg_regs` operand as the nested body's `ct_func_symbol` in
-    `tests/mir_passes/inline-parametric/{generic_kept,
-    capturing_callable_binder}.mir`, keeping their `.expected`.
-  - Tests beside `verify_application`'s: reject `origin_unbound` and an
-    own `ct_deferred`, and accept a `$origin_mut` read, a `ct_expr` binder
-    read, and a closed slot.
-  - Docs: `verify_application` in `docs/architecture.md`, the
-    `ct_deferred` meanings in `docs/mir-text-format.md`, and B1e.
-  - Slice B1e of `docs/call-application-plan.md`.
-  - Depends on R2633, R2634, R2638, R2646, R2439 (a call that infers no
-    origin for an open binder records `_`), R2517 (a
-    synthesized move's register type keeps its member's own deferred
-    `mut=`), and R2376 (`freeze(other: S)` declares no binder to name its
-    argument's origin).
-  - Model: Opus, Not Planned.
-
 - [ ] **R2640 A call's type argument nests a placeholder**
 
   A slot is a type whose own arguments still hold `ct_deferred` or
@@ -141,8 +109,36 @@ slice.
   - R2517 (a member over `origin_of(self)`) and R2376 (an unparameterized
     `StringSpan` parameter) cause some of these. Re-probe after them and
     fix what remains.
-  - Depends on R2639 (the top-level rule first), R2517, and R2376.
+  - Probe: `verify_application` (`mir/verify/calls.rs`) skips the
+    placeholder check for a `__copyinit__` or `__moveinit__` call, whose
+    application restates the copied register type's arguments. In
+    `std_iter_map`'s `main`, after `inline-parametric` splices `map`, the
+    lowered `_ArrayIter.__moveinit__` restates `iterable_mut` as
+    `ct_deferred` (R2653's associated result). Drop the exemption when
+    types hold no placeholder.
+  - Depends on R2517, R2376, and R2653.
   - Model: Fable, Planned.
+
+- [ ] **R2666 With the pre-elaboration pipeline off, an instance body's
+  implicit `mut=` binder of an unbound-origin parameter is unresolved**
+
+  The elaborator stops with "unsupported monomorphization cannot resolve
+  parameter `$mut_coefficients`" in `_horner_evaluate` when
+  `MOJITO_PRE_ELABORATION=0`, where the pipeline-on run and the pin print
+  the fixture's output.
+  - The binder is the implicit `mut=` R2376 declares for a parameter over
+    `Span[T, _]` or a bare `StringSpan`. Something in the instance body,
+    likely a lifted `comptime` evaluation whose applied binders leave out
+    origin and `mut=` binders (`binders_in_scope`), reads it unbound.
+  - Probe: `assets/ok/simd_pow_dunders.mojo` and
+    `assets/ok/comptime_pow_applies_dunder.mojo` (`_horner_evaluate`'s
+    `$mut_coefficients`, from `polynomial_evaluate`).
+  - Probe: `assets/ok/string_span_literal.mojo` (`StringSpan.__ne__`'s
+    `$mut_rhs`).
+  - Present at R2376's landing commit (028c53067), before R2639.
+  - Found while landing R2639 (2026-11-27).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2641 A function alias's value or type hole is no generator over
   it**

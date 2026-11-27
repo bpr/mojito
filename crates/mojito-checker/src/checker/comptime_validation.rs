@@ -2595,7 +2595,9 @@ impl Checker {
         };
         let name = template_name(owner).to_string();
         let overloads = self.applicable_functions.get(&name);
-        let (function, own_arguments) = match self.implicit_conversion_constructor(source, ty)? {
+        let (function, own_arguments, borrowed) = match self
+            .implicit_conversion_constructor(source, ty)?
+        {
             Some(conversion) => (
                 overloads
                     .and_then(|overloads| {
@@ -2612,6 +2614,9 @@ impl Checker {
                         ))
                     })?,
                 conversion.own_arguments,
+                conversion
+                    .borrowed_origin
+                    .map(|id| (id, conversion.constructed)),
             ),
             // A builtin body folds before the struct's initializers
             // register: its `@implicit` one taking `source` converts.
@@ -2659,7 +2664,7 @@ impl Checker {
                 }) else {
                     return Ok(None);
                 };
-                (function, own_arguments)
+                (function, own_arguments, None)
             }
             None => return Ok(None),
         };
@@ -2714,6 +2719,26 @@ impl Checker {
         } else {
             argument
         };
+        // A view constructor's `ref [Self.origin]` source, passed as the
+        // compile-time memory holding it, binds that origin to compile-time
+        // memory's, immutable, as the pin types the converted value
+        // (`Span[Float64, ComptimeOrigin]`).
+        let instance = match borrowed.filter(|_| param.by_reference) {
+            Some((id, constructed)) => self.structs.get(template_name(owner)).map_or_else(
+                || ty.clone(),
+                |info| {
+                    let origin = mojito_types::origin::Origin::Static;
+                    super::instance_with_origin(&info.params, &constructed, id, &origin, |decl| {
+                        self.origin_mutability_slot(
+                            decl,
+                            &origin,
+                            Some(mojito_types::origin::Mutability::Immutable),
+                        )
+                    })
+                },
+            ),
+            None => ty.clone(),
+        };
         let mut arguments = match &own {
             Some((_, _, decls)) => {
                 let Some(own) = self.own_parameter_arguments(decls, &own_arguments, resolve) else {
@@ -2727,7 +2752,7 @@ impl Checker {
         let selected = Selected {
             name,
             function,
-            instance: function.on_instance.then(|| ty.clone()),
+            instance: function.on_instance.then_some(instance),
             arguments,
             result: None,
             conversions: 0,

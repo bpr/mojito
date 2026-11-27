@@ -2044,7 +2044,7 @@ impl Checker {
             (
                 &use_names,
                 (&solve_params, &use_params),
-                (&solve_actuals, &arg_tys),
+                (&solve_actuals, &arg_tys, &arg_exprs),
             ),
             (&slots, names, &func.params, default_solves),
         )?;
@@ -2432,7 +2432,7 @@ impl Checker {
         decls: &[ParamDecl],
         bracket: (&[mojito_ast::ast::ParamArg], &ExplicitTypes),
         (names, patterns): (&[String], &[Ty]),
-        actuals: &[Ty],
+        (actuals, arguments): (&[Ty], &[Option<&Expr>]),
     ) -> Result<SolvedCall, TypeError> {
         let open: Vec<_> = super::origins::declared_origin_binders(decls)
             .filter(|id| !bracket.1.origins().iter().any(|bound| bound.id == *id))
@@ -2444,6 +2444,92 @@ impl Checker {
         } else {
             self.bracket_origin_places(name, decls, bracket.0)
         };
+        let solved = self.solve_call_lending(
+            name,
+            decls,
+            bracket,
+            (names, patterns),
+            actuals,
+            (&open, &compile_time),
+        )?;
+        // An argument whose view conversion the solve's type binders
+        // decide (`List[Int]` at `elems: Span[T, _]`), and a compile-time
+        // one its check converts (a list display at `Span[Scalar[dtype],
+        // _]`), lend the origin of the value the conversion builds, as
+        // upstream unifies the parameter's type with the converted value's:
+        // the solve runs again over that type.
+        let run_time = self.converted_run_time_actuals(
+            decls,
+            (patterns, actuals, arguments),
+            (&open, &solved),
+        );
+        let converted = converted_compile_time_places(decls, &compile_time, &solved.bound);
+        if run_time.is_none() && converted.is_none() {
+            return Ok(solved);
+        }
+        self.solve_call_lending(
+            name,
+            decls,
+            bracket,
+            (names, patterns),
+            run_time.as_deref().unwrap_or(actuals),
+            (&open, converted.as_deref().unwrap_or(&compile_time)),
+        )
+    }
+
+    /// `actuals` with each argument (`arguments`, aligned with `patterns`)
+    /// whose parameter names an origin binder of `open` the first solve
+    /// (`solved`) left unbound converted through its view conversion at
+    /// the parameter the solve's type binders substitute
+    /// ([`Self::view_conversion_actual`]), or `None` when none converts.
+    fn converted_run_time_actuals(
+        &self,
+        decls: &[ParamDecl],
+        (patterns, actuals, arguments): (&[Ty], &[Ty], &[Option<&Expr>]),
+        (open, solved): (&[mojito_types::origin::OriginParamId], &SolvedCall),
+    ) -> Option<Vec<Ty>> {
+        let unsolved = |id| {
+            open.contains(&id)
+                && solved
+                    .origins
+                    .as_ref()
+                    .is_none_or(|origins| !origins.bound.origins.contains_key(&id))
+        };
+        let mut converted = false;
+        let actuals = actuals
+            .iter()
+            .enumerate()
+            .map(|(index, actual)| {
+                let conversion = patterns
+                    .get(index)
+                    .zip(arguments.get(index).copied().flatten())
+                    .filter(|(pattern, _)| {
+                        super::origins::names_origin_binder_in(pattern, &unsolved)
+                    })
+                    .and_then(|(pattern, argument)| {
+                        let pattern = substitute(pattern, &solved.bound.subst);
+                        self.view_conversion_actual((&pattern, actual), argument, decls)
+                    });
+                converted |= conversion.is_some();
+                conversion.unwrap_or_else(|| actual.clone())
+            })
+            .collect();
+        converted.then_some(actuals)
+    }
+
+    /// [`Self::resolve_call_params`] with `compile_time`, each compile-time
+    /// parameter whose type names an origin binder, that type, and its
+    /// argument's, lending the origin binders `open` after the run-time
+    /// arguments.
+    fn solve_call_lending(
+        &self,
+        name: &str,
+        decls: &[ParamDecl],
+        bracket: (&[mojito_ast::ast::ParamArg], &ExplicitTypes),
+        (names, patterns): (&[String], &[Ty]),
+        actuals: &[Ty],
+        (open, compile_time): (&[mojito_types::origin::OriginParamId], &[(String, Ty, Ty)]),
+    ) -> Result<SolvedCall, TypeError> {
         let lent_names: Vec<String> = names
             .iter()
             .cloned()
@@ -2473,7 +2559,7 @@ impl Checker {
                 &lent_names,
                 &lent,
                 &places,
-                super::origins::CalleeBinders::Declared(open),
+                super::origins::CalleeBinders::Declared(open.to_vec()),
             )?)
             .filter(|origins| !origins.is_empty())
         };
@@ -2501,21 +2587,33 @@ impl Checker {
             |origins| origins.substitute_all(patterns),
         );
         // A compile-time argument is checked against its parameter's type
-        // with the origins the call bound, as a run-time one is.
-        let typed: Option<Vec<ParamDecl>> = origins
-            .as_ref()
-            .filter(|_| !compile_time.is_empty())
-            .map(|origins| {
-                decls
-                    .iter()
-                    .map(|decl| match decl {
-                        ParamDecl::Value { ty, .. } if super::origins::names_origin_binder(ty) => {
-                            decl.with_value_type(origins.substitute(ty))
-                        }
-                        _ => decl.clone(),
-                    })
-                    .collect()
-            });
+        // with the origins the call bound, as a run-time one is, and one
+        // still open is the conversion's to bind, as the run-time view
+        // conversion's target leaves it ([`Self::view_target`]).
+        let typed: Option<Vec<ParamDecl>> = (!compile_time.is_empty()).then(|| {
+            let unsolved = |id| {
+                open.contains(&id)
+                    && origins
+                        .as_ref()
+                        .is_none_or(|origins| !origins.bound.origins.contains_key(&id))
+            };
+            decls
+                .iter()
+                .map(|decl| match decl {
+                    ParamDecl::Value { ty, .. } if super::origins::names_origin_binder(ty) => {
+                        let ty = self
+                            .view_target(ty, &unsolved)
+                            .unwrap_or_else(|| ty.clone());
+                        decl.with_value_type(
+                            origins
+                                .as_ref()
+                                .map_or_else(|| ty.clone(), |origins| origins.substitute(&ty)),
+                        )
+                    }
+                    _ => decl.clone(),
+                })
+                .collect()
+        });
         let mut bound = self
             .resolve_explicit_use_params(
                 name,
@@ -2595,7 +2693,7 @@ impl Checker {
                 &binders,
                 (&[], &ExplicitTypes::default()),
                 (&[name.to_string()], &[solve_pattern]),
-                &[actual],
+                (&[actual], &[Some(default)]),
             )
             .ok()?;
         let pattern = origins
@@ -2632,7 +2730,7 @@ impl Checker {
         supplied: SuppliedSolve<'_>,
         (slots, names, params, default_solves): OmittedSolve<'_>,
     ) -> Result<SolvedCall, TypeError> {
-        let (use_names, (solve_params, use_params), (solve_actuals, arg_tys)) = supplied;
+        let (use_names, (solve_params, use_params), (solve_actuals, arg_tys, arguments)) = supplied;
         let mut solve_names = use_names.to_vec();
         let mut patterns = [solve_params, &use_params[solve_params.len()..]].concat();
         let mut actuals = [solve_actuals, &arg_tys[solve_actuals.len()..]].concat();
@@ -2643,7 +2741,16 @@ impl Checker {
                 actuals.push(solved.clone());
             }
         }
-        self.resolve_call_params(name, decls, bracket, (&solve_names, &patterns), &actuals)
+        self.resolve_call_params(
+            name,
+            decls,
+            bracket,
+            (&solve_names, &patterns),
+            (
+                &actuals,
+                &arguments.iter().copied().map(Some).collect::<Vec<_>>(),
+            ),
+        )
     }
 
     /// Reject an argument binding an origin binder to an immutable origin
@@ -3089,9 +3196,7 @@ impl Checker {
         argument: &Expr,
         decls: &[ParamDecl],
     ) -> Option<Ty> {
-        use mojito_types::origin::Origin;
-        use mojito_types::types::OriginMutability;
-        let (name, arguments) = parameter.kind().as_non_pointer_struct()?;
+        let (name, _) = parameter.kind().as_non_pointer_struct()?;
         if actual
             .kind()
             .as_non_pointer_struct()
@@ -3100,15 +3205,29 @@ impl Checker {
             return None;
         }
         let own = |id| super::origins::declared_origin_binders(decls).any(|own| own == id);
-        if !super::origins::names_origin_binder_in(parameter, &own) {
+        let target = self.view_target(parameter, &own)?;
+        self.converted_instance(&target, actual, argument)
+    }
+
+    /// The target a conversion to `parameter` builds before the call binds
+    /// the callee's origin binders (`own`): each slot over one open, and
+    /// the `mut=` slot it governs deferred, as the solved parameter's are.
+    /// `None` for a parameter naming none.
+    fn view_target(
+        &self,
+        parameter: &Ty,
+        own: &dyn Fn(mojito_types::origin::OriginParamId) -> bool,
+    ) -> Option<Ty> {
+        use mojito_types::origin::Origin;
+        use mojito_types::types::OriginMutability;
+        let (name, arguments) = parameter.kind().as_non_pointer_struct()?;
+        if !super::origins::names_origin_binder_in(parameter, own) {
             return None;
         }
         let params = &self.structs.get(name)?.params;
         if params.len() != arguments.len() {
             return None;
         }
-        // The target the conversion builds before the call binds the
-        // callee's binders: their slots open, as the solved parameter's are.
         let open: Vec<_> = params
             .iter()
             .zip(arguments)
@@ -3123,24 +3242,27 @@ impl Checker {
                 _ => None,
             })
             .collect();
-        let target: Ty = TyKind::Struct(
-            name.clone(),
-            params
-                .iter()
-                .zip(arguments)
-                .map(|(decl, argument)| match argument {
-                    TyArg::Origin(Origin::Param(id)) if own(*id) => TyArg::Origin(Origin::Unbound),
-                    TyArg::Val(value)
-                        if open.contains(decl.id()) && !matches!(value, CtValue::Bool(_)) =>
-                    {
-                        TyArg::Val(CtValue::Deferred(decl.binder()))
-                    }
-                    argument => argument.clone(),
-                })
-                .collect(),
+        Some(
+            TyKind::Struct(
+                name.clone(),
+                params
+                    .iter()
+                    .zip(arguments)
+                    .map(|(decl, argument)| match argument {
+                        TyArg::Origin(Origin::Param(id)) if own(*id) => {
+                            TyArg::Origin(Origin::Unbound)
+                        }
+                        TyArg::Val(value)
+                            if open.contains(decl.id()) && !matches!(value, CtValue::Bool(_)) =>
+                        {
+                            TyArg::Val(CtValue::Deferred(decl.binder()))
+                        }
+                        argument => argument.clone(),
+                    })
+                    .collect(),
+            )
+            .into(),
         )
-        .into();
-        self.converted_instance(&target, actual, argument)
     }
 
     /// The instance the implicit conversion of `argument`, of type
@@ -3596,9 +3718,50 @@ fn names_declared_binder(ty: &Ty, decl: &ParamDecl) -> bool {
 
 /// A generic call's supplied arguments as its one solve reads them:
 /// their names, the solve patterns leading the parameters, and the solve
-/// actuals leading the argument types.
-type SuppliedSolve<'a> = (&'a [String], (&'a [Ty], &'a [Ty]), (&'a [Ty], &'a [Ty]));
+/// actuals leading the argument types, beside each argument's expression.
+type SuppliedSolve<'a> = (
+    &'a [String],
+    (&'a [Ty], &'a [Ty]),
+    (&'a [Ty], &'a [Ty], &'a [&'a Expr]),
+);
 
 /// A generic call's slots, with its callee's parameter names, types, and
 /// solved defaults, which an argument the call leaves out solves from.
 type OmittedSolve<'a> = (&'a [ArgSlot], &'a [String], &'a [Ty], &'a [Option<Ty>]);
+
+/// `compile_time` ([`Checker::bracket_origin_places`]) with each argument
+/// its check converted to its parameter's struct at the type of the value
+/// `bound` holds for it (`Span[False, Float64, ImmStaticOrigin]` for a list
+/// display at `Span[Float64, _]`), or `None` when the check converted none.
+fn converted_compile_time_places(
+    decls: &[ParamDecl],
+    compile_time: &[(String, Ty, Ty)],
+    bound: &BoundParameters,
+) -> Option<Vec<(String, Ty, Ty)>> {
+    let template =
+        |ty: &Ty| mojito_types::types::nominal_parts(ty).map(|(name, _)| name.to_string());
+    let view = ParamDecl::argument_view(decls);
+    let mut converted = false;
+    let places = compile_time
+        .iter()
+        .map(|(name, declared, actual)| {
+            let value = view
+                .iter()
+                .position(|decl| decl.name() == name)
+                .and_then(|index| match bound.arguments.get(index)? {
+                    TyArg::Val(CtValue::Expr(value)) => value.meta().as_value().cloned(),
+                    _ => None,
+                })
+                .filter(|value| {
+                    template(actual) != template(declared) && template(value) == template(declared)
+                });
+            converted |= value.is_some();
+            (
+                name.clone(),
+                declared.clone(),
+                value.unwrap_or_else(|| actual.clone()),
+            )
+        })
+        .collect();
+    converted.then_some(places)
+}

@@ -2392,9 +2392,21 @@ solved arguments bind any other list (`verify_application` in
 a checker-instantiated `call.indirect`, and a subscript's
 `subscript_call`): a call to a generic callee
 carries one argument per declared binder, an empty application included,
-and a call naming an instance, which declares none, carries none. The rule
-counts; an argument may still be a placeholder (`ct_deferred`,
-`origin_unbound`). A subscript is a call of its accessor: its contract's
+and a call naming an instance, which declares none, carries none. Each
+top-level argument is closed or open only over the caller's own binders:
+the rule rejects an `origin_unbound` slot, and a `ct_deferred` one other
+than the caller-open `$origin_mut` read (`Mutability::of_mut_argument`),
+since the elaborator substitutes neither. A placeholder nested in a type
+argument is not yet rejected, nor one a `__copyinit__` or `__moveinit__`
+call restates from its copied type's arguments (R2640). An argument
+whose view conversion the solve's type binders decide (`List[Int]` at
+`elems: Span[T, _]`) and a compile-time argument a conversion builds (a
+list display at `Span[Scalar[dtype], _]`, over compile-time memory's
+origin, `Origin::Static`, upstream's `ComptimeOrigin`, R899) solve the
+origin binders their parameter's type names from the converted value's
+type, as upstream unifies the parameter with the converted value:
+`Checker::resolve_call_params` solves again over it, each argument's
+expression beside its pattern. A subscript is a call of its accessor: its contract's
 application comes from the checked contract, and a tuple destructuring's
 element read records the element's index as its accessor's argument
 (`Checker::tuple_unpack_plan`). A

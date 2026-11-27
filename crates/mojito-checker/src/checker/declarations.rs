@@ -5369,12 +5369,16 @@ impl Checker {
                             .insert(pname.trim_start_matches('*').to_string(), value.clone());
                         tyargs.push(TyArg::Val(value));
                     } else if callable_default.is_some() {
+                        // A later default repeating this binder
+                        // (`fallback = primary`) reads the value it took.
                         let value = omitted_callable_value(
                             &self.param_context,
                             &|symbol| self.generic_function_ty(symbol),
                             (decls, decl),
                             (&value_environment, &subst),
                         );
+                        value_environment
+                            .insert(pname.trim_start_matches('*').to_string(), value.clone());
                         tyargs.push(TyArg::Val(value));
                     } else {
                         let unsolved = decl.list_pack(decls).unwrap_or(decl);
@@ -6459,7 +6463,7 @@ impl Checker {
             &declared,
             (explicit, &explicit_types),
             (&names, &patterns),
-            &actuals,
+            (&actuals, &[]),
         )?;
         unify_through_callable_bounds(self, &decls, &mut subst)?;
         // Each own origin's `mut=` binder takes the value the arguments

@@ -2041,6 +2041,7 @@ impl Checker {
                 .unwrap_or_else(|| "args".to_string())
         };
         let mut patterns = Vec::new();
+        let mut pattern_arguments: Vec<Option<&Expr>> = Vec::new();
         let mut pattern_names = Vec::new();
         let mut actuals = Vec::new();
         // The receiver is argument 0: its clause's binders (`ref[o] self`,
@@ -2055,11 +2056,13 @@ impl Checker {
             );
             pattern_names.push("self".to_string());
             patterns.push(pattern);
+            pattern_arguments.push(Some(receiver));
             actuals.push(actual);
         }
         if let Some((declared, actual)) = &custom_receiver {
             pattern_names.push("self".to_string());
             patterns.push(declared.clone());
+            pattern_arguments.push(None);
             actuals.push((*actual).clone());
         }
         for (index, slot) in matched.slots.iter().enumerate() {
@@ -2072,6 +2075,7 @@ impl Checker {
                     if let Some(Some(solved)) = signature.default_solves.get(index) {
                         pattern_names.push(signature.names[index].clone());
                         patterns.push(params[index].clone());
+                        pattern_arguments.push(None);
                         actuals.push(solved.clone());
                     }
                     continue;
@@ -2098,11 +2102,13 @@ impl Checker {
                 &signature.declared,
             );
             patterns.push(pattern);
+            pattern_arguments.push(Some(expression));
             actuals.push(actual);
         }
         if let Some(element) = variadic {
             for position in matched.positional_overflow {
                 patterns.push(element.clone());
+                pattern_arguments.push(Some(&args[position]));
                 pattern_names.push(collector());
                 let actual = match &forwarded_pack {
                     Some((spread, forwarded)) if *spread == position => self.bind_forwarded_pack(
@@ -2128,11 +2134,13 @@ impl Checker {
         if let Some(element) = kw_variadic {
             for position in matched.keyword_overflow {
                 patterns.push(element.clone());
+                pattern_arguments.push(Some(&kwargs[position].value));
                 pattern_names.push(kwargs[position].name.clone());
                 actuals.push(self.infer(&kwargs[position].value)?);
             }
             if let Some(actual) = forwarded_element {
                 patterns.push(element.clone());
+                pattern_arguments.push(None);
                 pattern_names.push("kwargs".to_string());
                 actuals.push(actual);
             }
@@ -2151,7 +2159,7 @@ impl Checker {
             &signature.declared,
             (param_args, &explicit),
             (&pattern_names, &patterns),
-            &actuals,
+            (&actuals, &pattern_arguments),
         )?;
         let bound = |ty: &Ty| {
             origin_bindings

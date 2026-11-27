@@ -5102,7 +5102,9 @@ impl<'d> Instantiation<'d> {
                 CallableArgument::Closure(closure) => Some(Bound::Closure(*closure)),
             },
             // A function symbol the call carries as a parameter attribute
-            // binds the binder directly, with no register to read.
+            // binds the binder directly, with no register to read, unless
+            // the call's register makes a closure of it, which carries the
+            // body's captures.
             (
                 ParamDecl::Value {
                     id,
@@ -5113,6 +5115,9 @@ impl<'d> Instantiation<'d> {
                 },
                 TyArg::Val(symbol @ CtValue::FuncSymbol(_)),
             ) if decl.binds_callables() => {
+                if let Some(CallableArgument::Closure(closure)) = callable {
+                    return Some(Bound::Closure(*closure));
+                }
                 let value = self.context.constant_as(symbol.clone(), ty).ok()?;
                 self.bindings.bind(id.clone(), value);
                 Some(Bound::Callable)

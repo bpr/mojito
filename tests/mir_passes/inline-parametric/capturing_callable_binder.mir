@@ -65,7 +65,7 @@ artifact {
               const { dest: %r1, value: int_literal(3) },
               literal.materialize { dest: %r4, value: %r1, target: kgen_simd { dtype: int, width: 1 } },
               struct.create { dest: %r2, fields: [%r4] },
-              call { dest: %r3, func: apply, raises: absent, args: [%r2], kwargs: [], capture_accesses: [capture_access { root: $v0, path: [], access: read }], param_arg_regs: [param_arg { name: present(f), value: present(%r0), expr: absent }], receiver: absent, instantiated_args: [value_arg(ct_deferred(binder { owner: "apply", slot: 0, name: f }))], spread: absent }
+              call { dest: %r3, func: apply, raises: absent, args: [%r2], kwargs: [], capture_accesses: [capture_access { root: $v0, path: [], access: read }], param_arg_regs: [param_arg { name: present(f), value: present(%r0), expr: absent }], receiver: absent, instantiated_args: [value_arg(ct_func_symbol("outer$plus"))], spread: absent }
             ],
             terminator: return { value: present(%r3) }
           }

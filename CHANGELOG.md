@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The MIR verifier now rejects a call whose compile-time application
+  leaves a top-level slot a placeholder, an `origin_unbound` origin or a
+  `ct_deferred` value other than the caller-open `$origin_mut` read, as
+  neither is closed or open over the caller's binders (R2639). A list
+  display bound to a `Span[T, _]` compile-time parameter
+  (`polynomial_evaluate[[c0, c1]](x)` in `std.math`'s logarithms), whose
+  origin and `mut` were left unsolved, now solves them from the span its
+  conversion builds over compile-time memory, immutable, as the pin's
+  `ComptimeOrigin`, so `comptime assert not m` over `o: Origin[mut=m]`
+  holds (`assets/ok/compile_time_parameter_origin_binders.mojo`). A
+  run-time argument converted to such a parameter over an open element
+  type (`",".join(xs)` over `elems: Span[T, _]`) now binds the span to
+  the argument's place, where its type named the callee's own origin
+  binder.
 - A parameter typed by a struct with an unbound origin (`s: Span[Byte,
   _]`, a bare `StringSpan`, `other: S`) is now generic over that origin
   and its `mut=`, as upstream's `addImplicitTypeParams` declares the pair

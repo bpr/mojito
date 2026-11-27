@@ -94,7 +94,7 @@ artifact {
             instructions: [
               const { dest: %r0, value: function(double) },
               var.use { dest: %r1, var: $v0, mode: copy },
-              call { dest: %r2, func: apply, raises: absent, args: [%r1], kwargs: [], capture_accesses: [], param_arg_regs: [param_arg { name: present(f), value: present(%r0), expr: absent }], receiver: absent, instantiated_args: [value_arg(ct_deferred(binder { owner: "apply", slot: 0, name: f }))], spread: absent }
+              call { dest: %r2, func: apply, raises: absent, args: [%r1], kwargs: [], capture_accesses: [], param_arg_regs: [param_arg { name: present(f), value: present(%r0), expr: absent }], receiver: absent, instantiated_args: [value_arg(ct_func_symbol("double"))], spread: absent }
             ],
             terminator: return { value: present(%r2) }
           }

@@ -310,7 +310,13 @@ pub(super) fn verify_call_instruction(
 /// binder the callee declares, as upstream's call of a generator carries
 /// the whole parameter list it binds, and a call naming an instance (a
 /// callee that declares none) carries none, since an instance is its
-/// generator already applied.
+/// generator already applied. Each argument is closed or open only over
+/// the caller's own binders, which the caller's instance closes: an
+/// unbound origin, or a deferred slot other than the caller-open
+/// `$origin_mut` read ([`Mutability::of_mut_argument`]), is neither. A
+/// copy or move constructor's call restates the copied type's arguments,
+/// so a placeholder there is the type's, which this rule does not reach
+/// (R2640).
 pub(super) fn verify_application(
     prefix: &str,
     callee: &str,
@@ -318,18 +324,37 @@ pub(super) fn verify_application(
     instantiated: &[mojito_types::types::TyArg],
     errors: &mut Vec<String>,
 ) {
-    if instantiated.len() == declarations.len() {
+    if instantiated.len() != declarations.len() {
+        errors.push(if declarations.is_empty() {
+            format!("{prefix}: call of instance '{callee}' carries a compile-time application")
+        } else {
+            format!(
+                "{prefix}: call of '{callee}' carries {} of its {} compile-time arguments",
+                instantiated.len(),
+                declarations.len()
+            )
+        });
         return;
     }
-    errors.push(if declarations.is_empty() {
-        format!("{prefix}: call of instance '{callee}' carries a compile-time application")
-    } else {
-        format!(
-            "{prefix}: call of '{callee}' carries {} of its {} compile-time arguments",
-            instantiated.len(),
-            declarations.len()
-        )
-    });
+    if mojito_symbol::symbol::lifecycle_constructor(callee)
+        .is_some_and(|(_, lifecycle)| lifecycle != "__init__")
+    {
+        return;
+    }
+    errors.extend(
+        declarations
+            .iter()
+            .zip(instantiated)
+
+            .filter_map(|(declaration, argument)| {
+                placeholder_kind(argument).map(|kind| {
+                    format!(
+                        "{prefix}: call of '{callee}' leaves its compile-time argument `{}` a placeholder ({kind})",
+                        declaration.name()
+                    )
+                })
+            }),
+    );
 }
 
 /// The receiver's parameter declarations beside its arguments (a struct's
@@ -1599,6 +1624,19 @@ fn owner_instance_param_types(
     mojito_types::types::struct_instance_types(decls, instance, &declaration.param_types)
 }
 
+/// The MIR text spelling of a top-level placeholder slot in a call's
+/// application ([`verify_application`]), or `None` for a slot closed or
+/// open over the caller's binders.
+fn placeholder_kind(argument: &TyArg) -> Option<&'static str> {
+    match argument {
+        TyArg::Origin(mojito_types::origin::Origin::Unbound) => Some("origin_unbound"),
+        TyArg::Val(CtValue::Deferred(binder)) if Mutability::of_mut_argument(binder).is_none() => {
+            Some("ct_deferred")
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1645,6 +1683,139 @@ mod tests {
         assert_eq!(
             findings(&[], &[TyArg::Ty(Ty::int())]),
             ["f: call of instance 'g' carries a compile-time application"]
+        );
+    }
+
+    /// `g[m: Bool, o: Origin[mut=m]]`.
+    fn origin_binder() -> Vec<ParamDecl> {
+        let mutability = mojito_types::param_expr::ParamRef {
+            id: ParamId::new("g", 0),
+            name: "m".into(),
+        };
+        vec![
+            ParamDecl::Value {
+                id: mutability.id.clone(),
+                name: "m".into(),
+                ty: Ty::bool(),
+                default: None,
+                callable_default: None,
+                infer_only: true,
+                variadic: false,
+                constraints: Vec::new(),
+            },
+            ParamDecl::Origin {
+                id: ParamId::new("g", 1),
+                name: "o".into(),
+                origin: mojito_types::origin::OriginParamId(0),
+                mutability: mojito_types::types::OriginMutability::Binder(mutability),
+                infer_only: true,
+                lit: false,
+                mlir_origin: None,
+            },
+        ]
+    }
+
+    /// An unbound origin is neither closed nor open over the caller's
+    /// binders: nothing the elaborator substitutes fills it.
+    #[test]
+    fn application_rejects_an_unbound_origin() {
+        assert_eq!(
+            findings(
+                &origin_binder(),
+                &[
+                    TyArg::Val(CtValue::Bool(false)),
+                    TyArg::Origin(mojito_types::origin::Origin::Unbound)
+                ]
+            ),
+            ["f: call of 'g' leaves its compile-time argument `o` a placeholder (origin_unbound)"]
+        );
+    }
+
+    /// A slot deferred over the callee's own binder is left unfilled.
+    #[test]
+    fn application_rejects_a_deferred_own_binder() {
+        let own = mojito_types::param_expr::ParamRef {
+            id: ParamId::new("g", 0),
+            name: "m".into(),
+        };
+        assert_eq!(
+            findings(
+                &origin_binder(),
+                &[
+                    TyArg::Val(CtValue::Deferred(own)),
+                    TyArg::Origin(mojito_types::origin::Origin::Static)
+                ]
+            ),
+            ["f: call of 'g' leaves its compile-time argument `m` a placeholder (ct_deferred)"]
+        );
+    }
+
+    /// The `$origin_mut` read names an implicit binder of the caller, which
+    /// the caller's instance closes.
+    #[test]
+    fn application_accepts_a_caller_origin_mutability_read() {
+        let origin = mojito_types::origin::OriginParamId(0);
+        assert!(
+            findings(
+                &origin_binder(),
+                &[
+                    TyArg::Val(Mutability::Param(origin).mut_argument()),
+                    TyArg::Origin(mojito_types::origin::Origin::Param(origin))
+                ]
+            )
+            .is_empty()
+        );
+    }
+
+    /// A read of the caller's own binder is open over the caller's binders.
+    #[test]
+    fn application_accepts_a_caller_binder_read() {
+        let read = mojito_types::param_expr::ParamContext::detached().decl_ref(
+            ParamId::new("f", 0),
+            "n",
+            mojito_types::param_expr::MetaTy::value(Ty::bool()),
+        );
+        assert!(
+            findings(
+                &origin_binder(),
+                &[
+                    TyArg::Val(CtValue::Expr(read)),
+                    TyArg::Origin(mojito_types::origin::Origin::Static)
+                ]
+            )
+            .is_empty()
+        );
+    }
+
+    /// A move constructor's application restates its type's arguments: a
+    /// placeholder there is the type's (R2640).
+    #[test]
+    fn application_leaves_a_restated_type_argument_to_the_type() {
+        let mut errors = Vec::new();
+        verify_application(
+            "f",
+            "S.__moveinit__",
+            &origin_binder(),
+            &[
+                TyArg::Val(CtValue::Bool(false)),
+                TyArg::Origin(mojito_types::origin::Origin::Unbound),
+            ],
+            &mut errors,
+        );
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn application_accepts_a_closed_origin_application() {
+        assert!(
+            findings(
+                &origin_binder(),
+                &[
+                    TyArg::Val(CtValue::Bool(false)),
+                    TyArg::Origin(mojito_types::origin::Origin::Static)
+                ]
+            )
+            .is_empty()
         );
     }
 }

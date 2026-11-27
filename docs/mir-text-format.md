@@ -1662,7 +1662,8 @@ call reads the caller's implicit `self_is_mut`. The verifier rejects a
 call whose solved arguments bind any other list. A call in an older
 artifact, whose solved arguments bind the argument view, is widened at load,
 each origin binder's slot `origin_unbound` and each `mut=` binder's
-deferred. The package format moves to `mojito-package 233`, a call's
+deferred; since R2639 the verifier rejects those placeholder slots, so
+such an artifact loads but does not verify. The package format moves to `mojito-package 233`, a call's
 recorded instantiation holding the whole list (R2350).
 
 The same schema's verifier also rejects an empty `instantiated_args` on a
@@ -2480,10 +2481,19 @@ own parameters and nothing else (schema 1.112),
 bracket's arguments in declaration order (schema 1.188),
 `ct_expr(param-expr)` for a residual
 parameter expression,
-`ct_deferred(binder)` for a slot whose value arrives later (a callable-value
-parameter the VM reifies) and which is no part of generic identity
-(schema 1.185 withdrew `ct_marker`). A deferred slot names the binder
-whose slot it fills by a `binder { owner, slot, name }` record.
+`ct_deferred(binder)` for a slot whose value arrives later and which is no
+part of generic identity (schema 1.185 withdrew `ct_marker`). A deferred
+slot names the binder whose slot it fills by a `binder { owner, slot, name
+}` record. It means one of three things: a binder a type leaves undecided
+(a struct instance's `mut=` slot nothing decides yet); a `$origin_mut`
+read, the `mut` of an implicit origin binder of the caller, which the
+caller's instance closes; or a callable-value parameter the VM reifies,
+which no current checker path writes. In a call's `instantiated_args`
+only the `$origin_mut` read is accepted at the top level: the verifier
+rejects any other `ct_deferred` slot there, and an `origin_unbound` one,
+as a placeholder the elaborator cannot substitute (R2639), except in a
+`__copyinit__` or `__moveinit__` call, whose application restates its
+copied type's arguments (R2640).
 
 `ct_pointer { offset: int, slots: dangling | [ct-value | absent, ...] }`
 (schema 1.39) carries frozen memory. `absent` is an uninitialized slot;
