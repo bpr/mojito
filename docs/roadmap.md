@@ -62,27 +62,6 @@ R2625–R2640 stage that, in
 [`docs/call-application-plan.md`](call-application-plan.md), one entry per
 slice.
 
-- [ ] **R2634 A method's own origin binder that only its `ref[o] self`
-  receiver binds records `_` in the call's application**
-
-  Upstream binds `self` as argument 0, so the receiver's clause solves the
-  binder.
-  - Cause: `instantiate_method_generics` (`checker/generics.rs`) solves
-    from the arguments' pairs, and the receiver's `ref[o] self` clause is
-    not among them, so `declared_call_arguments` gets no binding for `o`.
-  - Lever: push `reference_solve_pair` of the receiver's clause into the
-    one solve.
-  - Check the explicit `S.m(s)` and type-receiver paths (`statics.rs`,
-    `type_receivers.rs`) for the same gap.
-  - Probe: `assets/ok/{ref_receiver_address_space,origin_unsafe_mut_cast,
-    template_method_value_parameter}.mojo` (`S.first`, `S.sp`,
-    `Cell.hits_of`).
-  - Probe: a place, a temporary (`S().peek()`), and a dereferenced
-    (`p[].peek()`) receiver, and one inside a `ref` function. Add the
-    temporary and dereferenced ones as an `assets/ok` fixture.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R2635 A `VariadicList` construction records an unbound origin**
 
   Every homogeneous `*args` call builds a `VariadicList` whose register
@@ -10431,6 +10410,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     caller, prints `False` twice, where the pin prints `True False`.
   - Probe: `var g = b` for that `b` is accepted, where the pin rejects it
     as a parametric function naming its binder `mut`.
+  - Probe: `return o.mut` in `def by[o: Origin](ref[o] x: S) -> Bool`,
+    and in a method `peek[o: Origin](ref[o] self) -> Bool`, stops at
+    elaboration ("keeps the parameter constant `_`"), where the pin prints
+    `True` for a place and `False` for a temporary. The read names the
+    binder's `_` placeholder `mut`, which no call binds.
   - With every origin binder declaring its `mut`, a pointer's `mut`
     argument is that binder's read. The reserved `$origin_mut` reference
     (`Mutability::mut_argument`, `origin.rs`) and
@@ -11612,6 +11596,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Lever: carry the callee's declared list and the loop's solved
     arguments on the protocol (as `CheckedIteratorCall` does for
     `__next__`), and have both the VM and native paths read them.
+  - Probe: `for v in s` over `def __iter__[o: Origin](ref[o] self) -> It`
+    fails the same way ("call of 'S.__iter__' carries 0 of its 1
+    compile-time arguments"), where the pin runs the loop. A method call
+    `s.__iter__()` binds `o` from the receiver.
   - It blocks R2516: once every `ref self` declares its implicit binders,
     every bundled `__iter__(ref self)` is such a callee.
   - Found while landing R2471 (2026-11-22).

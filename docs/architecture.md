@@ -1304,11 +1304,14 @@ the receiver (`SigOrigin::Self_`) among them when its `ref[o] self` clause
 does (`bind_ref_binders`, `bind_ref_binders_with_receiver`, read by
 `solve_call_origins_with_bool_bindings`, `MethodSig::call_ref_return`, and
 a body's return check)); the receiver's clause is its own `ref` contract
-(`MethodSig::self_ref`), whose binders the call deduces from the receiver's
-place beside the arguments' and against which
-`Checker::check_receiver_ref` checks the receiver
+(`MethodSig::self_ref`); the receiver is argument 0 of every method's one
+solve (`instantiate_method_generics`), whatever its clause, so the call
+deduces the clause's binders (`ref[o] self`, `ref[_, a] self`) from the
+reference the receiver lends beside the arguments', and
+`Checker::check_receiver_ref` checks the receiver against it
 (`receiver_reference_actual`: a temporary receiver's hidden slot is lent
-mutably only under a mutable clause); a
+mutably only under a mutable clause, so a read clause's `o` binds an
+immutable origin, as at the pin); a
 compiler builtin's binder
 (`applied_type`'s collection, pointer, `SIMD`, and storage types,
 `external_call`, `reflect`, the `Variant` storage methods, the
@@ -6341,7 +6344,9 @@ binder, not `immutable` (`reference_actual`, and an `Infer`/`BoolParam` call
 result whose contributing arguments all carry one binder). A declared
 `ref[o]` over the callee's own `o: Origin[mut=m]` binds in the call's one
 solve instead: `reference_solve_pair` reads the argument as the `!lit.ref`
-it lends, so `o` binds to its place and `m` to its capability, which the
+it lends (`solving_reference_actual`: a temporary lends its materialized
+slot, immutably unless the clause is `mut`), so `o` binds to its place and
+`m` to its capability, which the
 recorded arguments carry, and the body's handle carries `Mutability::Param(o)`
 (`register_reference_binder`), which `origin_mutability_binder_read` reads
 as `m`. A bare `ref` declares no such pair yet (R2516). A write through it

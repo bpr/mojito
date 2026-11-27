@@ -3287,6 +3287,62 @@ fn receiver_and_origin_rooted_mut_slots_record_the_callers_read() {
 }
 
 #[test]
+fn ref_receiver_own_origin_binders_record_the_receivers_origin() {
+    // A method's own origin binder that only its `ref[o] self` clause names
+    // binds from the receiver, argument 0 of the call's one solve, whether
+    // the receiver is a temporary, a dereferenced pointer, or the explicit
+    // `S.peek(x)` argument; a free `ref[o]` parameter binds from a temporary
+    // argument's materialized slot the same way.
+    let source = include_str!("../assets/ok/ref_receiver_own_origin_temporary.mojo");
+    let compiler = Compiler::default();
+    let compiled = compiler
+        .compile_source(source, Path::new("ref_receiver_own_origin_temporary.mojo"))
+        .expect("compile own-origin receivers");
+    use mojito::origin::Origin;
+    use mojito::types::TyArg;
+    let main = &compiled
+        .mir()
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered")
+        .1;
+    let applications = main
+        .body
+        .instrs
+        .iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::MethodCall {
+                resolved: Some(callee),
+                instantiated_args,
+                ..
+            } if callee == "S.peek" || callee == "S.first" => {
+                Some((callee.clone(), instantiated_args.clone()))
+            }
+            MirInstr::Call {
+                func,
+                instantiated_args,
+                ..
+            } if func.0 == "by" || func.0 == "S.peek" => {
+                Some((func.0.clone(), instantiated_args.clone()))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(applications.len() >= 6, "{applications:?}");
+    for (callee, arguments) in &applications {
+        assert!(
+            matches!(arguments.first(), Some(TyArg::Origin(Origin::Place(_)))),
+            "{callee} records {arguments:?}"
+        );
+    }
+    assert_eq!(
+        compiler.execute(&compiled).unwrap().output,
+        "2 1 3\n4 5\n6 6\n"
+    );
+}
+
+#[test]
 fn inferred_generic_method_calls_retain_parameter_declarations() {
     let source = "@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def size[T: Copyable & Movable & Deinitable](self, var **options: T) -> Int:\n        return self.bias + len(options)\n\ndef main():\n    var counter = Counter(10)\n    print(counter.size(left=1, right=2))\n";
     let compiler = Compiler::default().with_snippet_module_scope();

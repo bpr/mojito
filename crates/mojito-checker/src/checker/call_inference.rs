@@ -2830,9 +2830,10 @@ impl Checker {
     /// upstream's `!lit.ref<T, o, a>` against the reference it lends,
     /// binding `a` to the space its place lives in, `o` to its origin, and
     /// `o`'s `mut=` binder to the capability it lends; any other as its
-    /// parameter type against its own. Only a binder of the callee's own
-    /// declared list (`decls`) binds so: an enclosing struct's is its
-    /// instance's.
+    /// parameter type against its own. A temporary argument lends its
+    /// materialized slot ([`Self::solving_reference_actual`]). Only a binder
+    /// of the callee's own declared list (`decls`) binds so: an enclosing
+    /// struct's is its instance's.
     pub(super) fn reference_solve_pair(
         &self,
         signature: Option<&mojito_types::origin::RefSig>,
@@ -2849,7 +2850,9 @@ impl Checker {
             }
             _ => None,
         });
-        let lent = binder.and_then(|_| self.reference_actual(argument).ok());
+        let lent = binder
+            .and(signature)
+            .and_then(|signature| self.solving_reference_actual(argument, signature));
         let Some(signature) =
             signature.filter(|signature| signature.address_space.is_symbolic() || lent.is_some())
         else {

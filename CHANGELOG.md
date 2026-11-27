@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A method's own origin binder named by its `ref[o] self` clause now binds
+  from the receiver, argument 0 of the call's one solve, instead of
+  recording `_` in the call's application (R2634). A place, a temporary, a
+  dereferenced pointer, and the explicit `S.m(x)` form all bind it. A
+  temporary `ref[o]` argument or receiver now solves as its hidden slot,
+  lent immutably unless the clause is `mut`, as at the pin, so `by(S()).x =
+  4` over a `-> ref[o]` result is rejected as "expression must be mutable
+  in assignment" rather than as a loan conflict.
+
 - A call's `mut=` slot governed by a `ref` receiver's, a bare `ref`
   parameter's, or a bare `o: Origin`'s origin now records the caller's
   implicit binder's `$origin_mut` read, as upstream's call reads the

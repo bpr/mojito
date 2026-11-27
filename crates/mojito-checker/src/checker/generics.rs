@@ -2043,11 +2043,10 @@ impl Checker {
         let mut patterns = Vec::new();
         let mut pattern_names = Vec::new();
         let mut actuals = Vec::new();
-        // The receiver is argument 0: its clause's binders (`ref[_, a]
-        // self`) are deduced from its place, as a `ref` parameter's are.
-        if let (Some(self_ref), Some((receiver_ty, receiver))) = (&signature.self_ref, receiver)
-            && self_ref.address_space.is_symbolic()
-        {
+        // The receiver is argument 0: its clause's binders (`ref[o] self`,
+        // `ref[_, a] self`) are deduced from the reference it lends, as a
+        // `ref` parameter's are.
+        if let (Some(self_ref), Some((receiver_ty, receiver))) = (&signature.self_ref, receiver) {
             let (pattern, actual) = self.reference_solve_pair(
                 Some(self_ref),
                 (receiver_ty, receiver_ty),

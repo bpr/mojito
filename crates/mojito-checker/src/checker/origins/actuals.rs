@@ -245,6 +245,26 @@ impl Checker {
         self.reference_actual_lending(object, mutable)
     }
 
+    /// The reference the call's one solve reads for an argument bound to a
+    /// `ref` clause naming a declared origin binder: a place's own
+    /// reference, and an rvalue's hidden materialized slot, lent immutably
+    /// unless the clause demands a mutable reference, as the pin binds
+    /// `o.mut` to `False` for `S().peek()` and `by(S())`.
+    pub(in crate::checker) fn solving_reference_actual(
+        &self,
+        expr: &Expr,
+        signature: &mojito_types::origin::RefSig,
+    ) -> Option<mojito_types::origin::RefTy> {
+        use mojito_types::origin::{Mutability, SigMutability};
+        self.reference_actual(expr).ok().or_else(|| {
+            let mut reference = self.receiver_reference_actual(expr, signature).ok()?;
+            if !matches!(signature.mutability, SigMutability::Mutable) {
+                reference.mutability = Mutability::Immutable;
+            }
+            Some(reference)
+        })
+    }
+
     /// The place a borrow of a non-place expression lends, as upstream's
     /// `!lit.ref` into an rvalue's storage: a field chain over a fresh owned
     /// temporary (`V(1).xs`, `(a + b).xs`) materializes the chain's root and
