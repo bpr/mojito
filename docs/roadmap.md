@@ -4389,6 +4389,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `StaticTuple[Int64, 2]` prints `4` at the pin. On landing, restore
     upstream's `_int_tuple_compare[apply_fn](self.data, rhs.data)` in
     `IndexList`'s five comparisons (`stdlib/std/utils/index.mojo`).
+  - Probe: `f(5)` over `def f[n: Int](w: W[n]) -> Int: return n` and
+    `@implicit def __init__(out self: W[3], x: Int)` prints `3` at the pin,
+    a value binder solved from a refined `out self`; here "cannot infer
+    type parameter 'n'". An origin binder already solves so
+    (`view_conversion_actual`, `checker/call_inference.rs`).
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -4434,38 +4439,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     with the same field fails ("no overload matches" for `len`), where
     the pin prints `3`.
   - Found while landing R2656 (2026-11-27).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2657 An origin binder is not solved through an implicit
-  conversion whose initializer refines `out self`**
-
-  `g("xy")` over `def g[o: ImmOrigin](s: StringSpan[o]) -> Int` is
-  rejected ("type mismatch for argument to 'g': expected StringSpan[false],
-  found StringLiteral["xy"]"), where the pin prints `2`. `g(a)` over a
-  `String` already runs.
-  - The literal converts through `StringSpan.__init__(out self:
-    StaticString, lit: StringLiteral)`, whose `out self` is a refined
-    instance.
-  - `Checker::direct_conversion_constructor` (`checker.rs`) requires that
-    refined result to equal the parameter type through
-    `solved_refinement_is`, and the parameter still holds the callee's
-    unsolved binder `o`.
-  - Accepting an `Origin::Param` target in `solved_refinement_is` alone
-    changes nothing: the binder must be solved before the parameter type
-    is resolved.
-  - Upstream unifies the conversion's result type with the parameter type,
-    which solves the binder.
-  - Lever: have the call's binder solve read a converting argument's
-    constructed instance (`SelectedConversion::constructed`) for the origin
-    and `mut=` binders the parameter pattern names, at the site R52
-    extends for type binders, not a parallel path.
-  - Every bare `StringSpan` parameter of the bundled library meets this
-    once R2376 declares its binders: `_stat`'s `String("unable to stat
-    '") + path + "'"` (`std/os/_linux_x86.mojo`) is the first library
-    site, through `String.__add__(self, other: StringSlice)`.
-  - Probe: `[o: ImmOrigin]` over `Span[Byte, o]` from a list display.
-  - Found while planning R2376 (2026-11-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -8387,6 +8360,11 @@ retained on purpose and re-probed rather than fixed; they are listed in
     the pin; that special case goes with the port.
   - Done when the bundled declaration is upstream's and the name check is
     gone.
+  - Probe: `g2("abcd")` and `g2(a)` over `def g2[m: Bool, //, o:
+    Origin[mut=m]](s: StringSpan[o])` and a `String` `a` run here, where
+    the pin rejects both ("it depends on an unresolved parameter
+    'origin_of(o)'"): its `StringSpan[o]` spells `ImmOrigin(o)`, which no
+    argument solves.
   - Found while repairing the 2026-11-04 overnight gate.
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -11981,12 +11959,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The same gate is R1156's cause: the binders also carry the argument's
     origin into argument exclusivity. Confirm R1156's `Span` probes and
     delete it with this entry. Its pointer-alias probe is R2441's.
-  - With the gate removed, the bundled library stops packaging at the
-    first literal `+ "…"` (R2657). Past it, the `Hasher` and `Writer`
-    requirements fail (R2658, and R2397 for a conformer with origin
-    parameters). A conversion's `mut=` now solves (R2656), so the user
+  - With the gate removed, the bundled library now packages past every
+    literal passed to a bare `StringSpan` parameter and stops at the
+    `Hasher` requirement (`AHasher._update_with_bytes`, R2658); the
+    `Writer` requirement fails past it (R2658, and R2397 for a conformer
+    with origin parameters). A conversion's `mut=` now solves (R2656), so the user
     `V` probe of `h(xs)` over `def h(v: V[Int, _])` should print `True`
-    once the gate is gone. The site list past R2657 is unverified: if a packaging failure appears
+    once the gate is gone. The site list past R2658 is unverified: if a packaging failure appears
     that is none of these, file it and keep the gate.
   - Check packaging with a fresh `MOJITO_CACHE_DIR`. A cached package
     masks the failure.

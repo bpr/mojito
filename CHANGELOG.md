@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An origin binder a parameter names now solves through an implicit
+  conversion whose initializer refines `out self`, as upstream unifies the
+  parameter with the converted value's type (R2657). `g("xy")` over `def
+  g[o: ImmOrigin](s: StringSpan[o])`, which was rejected as a type
+  mismatch, prints `2`, binding `o` to the static origin of `out self:
+  StaticString`
+  (`assets/ok/origin_binder_solved_through_refined_conversion.mojo`).
 - An origin binder a parameter names now solves through the argument's
   implicit view conversion together with its `mut=` binder, as upstream
   unifies the parameter with the converted value's type (R2656).

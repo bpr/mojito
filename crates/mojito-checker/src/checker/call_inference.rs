@@ -2907,13 +2907,16 @@ impl Checker {
 
     /// The type `argument` solves as where it converts implicitly to
     /// `parameter`, a view naming one of the callee's own origin binders
-    /// (`decls`), through a constructor borrowing it by `ref
-    /// [Self.origin]`: the instance that constructor builds, its origin the
-    /// argument's place and the `mut=` binder governing that origin the
-    /// place's mutability, as upstream unifies the parameter with the
-    /// converted value's type and so solves the binder and its `mut=`
-    /// binder together (`hx(bs)` over `hx[m: Bool, //, o: Origin[mut=m]](s:
-    /// Span[Byte, o])` binds `o` to `bs` and `m` to its capability).
+    /// (`decls`): the instance its converting constructor builds, as
+    /// upstream unifies the parameter with the converted value's type and
+    /// so solves the binder and its `mut=` binder together. A constructor
+    /// borrowing the argument by `ref [Self.origin]` builds one whose origin
+    /// is the argument's place and whose governing `mut=` binder is the
+    /// place's mutability (`hx(bs)` over `hx[m: Bool, //, o:
+    /// Origin[mut=m]](s: Span[Byte, o])` binds `o` to `bs` and `m` to its
+    /// capability); one refining `out self` builds the instance it names
+    /// (`g("xy")` over `g[o: ImmOrigin](s: StringSpan[o])` binds `o` to the
+    /// static origin of `out self: StaticString`).
     pub(super) fn view_conversion_actual(
         &self,
         (parameter, actual): (&Ty, &Ty),
@@ -2974,7 +2977,17 @@ impl Checker {
         let selected = self
             .implicit_conversion_constructor(actual, &target)
             .ok()??;
-        let id = selected.borrowed_origin?;
+        let Some(id) = selected.borrowed_origin else {
+            // A refined `out self` (`out self: StaticString`) names the
+            // origin itself.
+            return Some(selected.constructed).filter(|constructed| {
+                mojito_types::types::nominal_parts(constructed).is_some_and(|(_, arguments)| {
+                    !arguments
+                        .iter()
+                        .any(|argument| matches!(argument, TyArg::Origin(Origin::Unbound)))
+                })
+            });
+        };
         let (origin, lent) = self.reference_argument(argument)?;
         Some(super::instance_with_origin(
             params,
