@@ -3408,6 +3408,88 @@ fn ref_receiver_own_origin_binders_record_the_receivers_origin() {
 }
 
 #[test]
+fn alias_bracket_hole_records_the_inferred_origin() {
+    // A call through a `comptime` alias that leaves an origin binder open
+    // (`first[_, 6]`) is the call of the aliased function at its whole
+    // declared list: the open slot holds the origin the call infers from its
+    // argument, and each bound slot keeps the bracket's value.
+    use mojito::CtValue;
+    use mojito::origin::Origin;
+    use mojito::types::TyArg;
+    fn calls(source: &str, name: &str) -> (Vec<(String, Vec<TyArg>)>, String) {
+        let compiler = Compiler::default();
+        let compiled = compiler
+            .compile_source(source, Path::new(name))
+            .expect("compile alias bracket hole");
+        let main = &compiled
+            .mir()
+            .functions
+            .iter()
+            .find(|(name, _)| name == "main")
+            .expect("main lowered")
+            .1;
+        let calls = main
+            .body
+            .instrs
+            .iter()
+            .filter_map(|instruction| match instruction {
+                MirInstr::Call {
+                    func,
+                    instantiated_args,
+                    ..
+                } if func.0 == "first" || func.0 == "pair" => {
+                    Some((func.0.clone(), instantiated_args.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        (calls, compiler.execute(&compiled).unwrap().output)
+    }
+    let (applications, output) = calls(
+        include_str!("../assets/ok/function_bracket_unbound_origin_marker.mojo"),
+        "function_bracket_unbound_origin_marker.mojo",
+    );
+    assert_eq!(output, "8\n23\n");
+    assert_eq!(applications.len(), 2, "{applications:?}");
+    for (callee, arguments) in &applications {
+        let bound = match callee.as_str() {
+            "first" => vec![6],
+            _ => vec![10, 3],
+        };
+        assert!(
+            matches!(arguments.first(), Some(TyArg::Origin(Origin::Place(_)))),
+            "{callee} records {arguments:?}"
+        );
+        let values = arguments[1..]
+            .iter()
+            .map(|argument| match argument {
+                TyArg::Val(CtValue::Int(value)) => Some(*value),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            values,
+            bound.into_iter().map(Some).collect::<Vec<_>>(),
+            "{callee} records {arguments:?}"
+        );
+    }
+    let chained = "def first[o: ImmOrigin, n: Int](p: Pointer[Int, o]) -> Int:\n    return p[] + n\n\ncomptime plus_six = first[_, 6]\ncomptime again = plus_six\n\ndef main():\n    var y = 2\n    print(again(Pointer(to=y)))\n";
+    let by_ref = "def first[o: ImmOrigin, n: Int](ref[o] x: Int) -> Int:\n    return x + n\n\ncomptime plus_six = first[_, 6]\n\ndef main():\n    var y = 2\n    print(plus_six(y))\n";
+    for (source, name) in [(chained, "chain.mojo"), (by_ref, "ref_hole.mojo")] {
+        let (applications, output) = calls(source, name);
+        assert_eq!(output, "8\n", "{name}");
+        assert_eq!(applications.len(), 1, "{name}: {applications:?}");
+        assert!(
+            matches!(
+                applications[0].1.as_slice(),
+                [TyArg::Origin(Origin::Place(_)), TyArg::Val(CtValue::Int(6))]
+            ),
+            "{name}: {applications:?}"
+        );
+    }
+}
+
+#[test]
 fn inferred_generic_method_calls_retain_parameter_declarations() {
     let source = "@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def size[T: Copyable & Movable & Deinitable](self, var **options: T) -> Int:\n        return self.bias + len(options)\n\ndef main():\n    var counter = Counter(10)\n    print(counter.size(left=1, right=2))\n";
     let compiler = Compiler::default().with_snippet_module_scope();

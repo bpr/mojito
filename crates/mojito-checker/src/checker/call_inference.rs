@@ -1343,9 +1343,11 @@ impl Checker {
 
     /// The whole declared list of `function`, the symbol a module constant
     /// folds to, as the call at `span` through that constant's value of
-    /// type `value` binds it: the bracket's arguments, and in each origin
-    /// slot the bracket left open, the origin this call inferred for the
-    /// generator `value` is over it.
+    /// type `value` binds it. `function`'s arguments already hold that
+    /// whole list, each slot the bracket left open being `Origin::Unbound`
+    /// for each call to infer (`declared_symbol_arguments`); the call fills
+    /// each such slot, by its binder, with what it inferred over the
+    /// generator `value`.
     fn folded_call_arguments(
         &self,
         span: &SourceSpan,
@@ -1366,17 +1368,18 @@ impl Checker {
         let (Some(open), Some(declared), Some(inferred)) = (open, declared, inferred) else {
             return function.arguments.clone();
         };
-        if function.arguments.len() + open.len() != declared.len() {
+        if function.arguments.len() != declared.len() {
             return function.arguments.clone();
         }
-        let mut bound = function.arguments.iter();
         declared
             .iter()
-            .filter_map(|decl| {
+            .zip(&function.arguments)
+            .map(|(decl, bound)| {
                 open.iter()
                     .position(|candidate| candidate.id() == decl.id())
-                    .map_or_else(|| bound.next(), |slot| inferred.get(slot))
-                    .cloned()
+                    .and_then(|slot| inferred.get(slot))
+                    .unwrap_or(bound)
+                    .clone()
             })
             .collect()
     }

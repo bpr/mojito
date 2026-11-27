@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2641**.
+Next free ID: **R2645**.
 
 ## Ordered Work
 
@@ -61,21 +61,6 @@ callee with the complete parameter application, which it substitutes.
 R2625–R2640 stage that, in
 [`docs/call-application-plan.md`](call-application-plan.md), one entry per
 slice.
-
-- [ ] **R2636 A `comptime` alias's bracket hole records `_` in the call's
-  application**
-
-  `first[_, 6]` and `pair[_, 10, 3]` through an alias record the hole as
-  `_`, where upstream's unbound parameter is the call's to infer from its
-  argument.
-  - Unverified cause: a `_` bracket origin shadows the solve's binding in
-    `declared_call_arguments`, or the alias's partial application
-    (`resolve_partial_use_params`) fixes the slot before the call.
-  - If the fix needs R2396's pre-check rewrite, file the site under R2396
-    and add R2396 here.
-  - Probe: `assets/ok/function_bracket_unbound_origin_marker.mojo`.
-  - Depends on nothing.
-  - Model: Fable, Planned.
 
 - [ ] **R2637 A call binds an alias-typed origin binder but not the
   implicit `mut` and `_mlir_origin` binders its spelling declares**
@@ -129,7 +114,8 @@ slice.
   - Docs: `verify_application` in `docs/architecture.md`, the
     `ct_deferred` meanings in `docs/mir-text-format.md`, and B1e.
   - Slice B1e of `docs/call-application-plan.md`.
-  - Depends on R2633, R2634, R2636, R2637, R2638, R2517 (a
+  - Depends on R2633, R2634, R2637, R2638, R2439 (a call that infers no
+    origin for an open binder records `_`), R2517 (a
     synthesized move's register type keeps its member's own deferred
     `mut=`), and R2376 (`freeze(other: S)` declares no binder to name its
     argument's origin).
@@ -154,6 +140,53 @@ slice.
     fix what remains.
   - Depends on R2639 (the top-level rule first), R2517, and R2376.
   - Model: Fable, Planned.
+
+- [ ] **R2641 A function alias's value or type hole is no generator over
+  it**
+
+  `comptime f = first[_, 6]` over `def first[n: Int, m: Int](x: Int)`,
+  then `f[1](2)`, fails with "cannot infer type parameter 'n' of 'first'
+  from the arguments", where the pin's partially bound symbol is a
+  generator over `n` and prints `9`.
+  - Cause: `bind_generic_callable_value` and
+    `specialize_callable_value_candidate` (`checker/generics.rs`) collect
+    only `ParamDecl::Origin` decls as the value's open generator list, so a
+    `_` over a type or value binder leaves nothing for the call to bind.
+  - Lever: the value's generator declares every binder the bracket left
+    `_`, as upstream's `#kgen.func.symbol` leaves each one unbound, with
+    each binder's own infer-only `mut=` or type binders beside it.
+  - Probe: the shape above.
+  - Probe: `f(2)` over `comptime f = first[_, 6]` and `def first[T:
+    Intable, n: Int](x: T)`; the pin prints `8`.
+  - Probe: `comptime b = a[_, 3]` over `comptime a = pair[_, 10, _]` and
+    `def pair[o: ImmOrigin, n: Int, m: Int](p: Pointer[Int, o])`, then
+    `b(Pointer(to=y))` with `y = 2`; the pin prints `23`.
+  - Probe: an origin hole whose binder has an infer-only `mut=` binder,
+    `first[_, 6]` over `first[m: Bool, //, o: Origin[mut=m], n: Int](p:
+    Pointer[Int, o])`, reports "'first[m, _, 6]' is not a compile-time
+    constant here", where the pin prints `8`; the generator must declare
+    `m` beside `o`.
+  - Found while landing R2636 (2026-11-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2642 A call through a local `comptime` function alias calls its
+  slot**
+
+  `comptime g = first[_, 6]` inside `main`, then `g(Pointer(to=y))`,
+  lowers to a `call.indirect` of a stored `function_instance first
+  [origin_unbound, 6]`, where upstream folds a call of a compile-time
+  constant into a direct call at any scope.
+  - Cause: `infer_call`'s `binding_scope(name) == Some(0)` filter
+    (`checker/call_inference.rs`) folds only a module constant's call, so
+    a local one records no callee application at all.
+  - A bare local alias (`comptime g = first`) already folds.
+  - Probe: the shape above prints `8` on both, but its `emit-mir` shows
+    the indirect call.
+  - Related: R2153 (a struct member holding a function).
+  - Found while landing R2636 (2026-11-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2628 The elaborator infers a call's bindings by unifying types
   instead of substituting the call's record**
@@ -6570,6 +6603,26 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2644 A `comptime` alias of a static method's specialization
+  cannot be called**
+
+  `comptime g = S.twice[5]` over `@staticmethod def twice[n: Int](x: Int)
+  -> Int`, then `g(2)`, fails with "vm backend does not support the
+  built-in or callee 'g' yet", where the pin prints `10`.
+  - Cause: the alias folds to no function symbol `folded_function_callee`
+    reads, so the call reaches MIR as a call of the alias's own name.
+  - Lever: fold a static method's specialization to its symbol
+    (`S.twice[5]`), as a module function's bracket folds.
+  - Probe: the shape above.
+  - Probe: `comptime g = S.get[_, 5]` over `@staticmethod def get[o:
+    ImmOrigin, n: Int](p: Pointer[Int, o]) -> Int`, then
+    `g(Pointer(to=y))` with `y = 2`, fails the same way; the pin prints
+    `7`.
+  - Related: R2153 (a struct's `comptime` member holding a function).
+  - Found while landing R2636 (2026-11-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R2154 A local binding of an overload set keeps the overload type**
 
   `var k: def(Int) thin -> Int = f` over two `f` overloads stops natively
@@ -9663,7 +9716,36 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Probe: `V(q)` over a `V` whose initializer declares its own
     `[t: Origin[mut=Self.m]]` runs, where the pin reports "no matching
     function in initialization".
+  - Probe: `g()` over `comptime g = f[_, 7]` and `def f[o: ImmOrigin, n:
+    Int]() -> Int` prints `7`, where the pin reports "invalid indirect
+    call: failed to infer parameter 'origin_of(_mlir_origin)'". The
+    call's application records `origin_unbound` for `o`.
+  - Probe: `h()` over `def h[o: ImmOrigin]() -> Int` prints `3`, where the
+    pin reports "invalid call to 'h': failed to infer parameter
+    'origin_of(_mlir_origin)'".
+  - Probe: `run(f[_, 7])` over `def run(g: def[o: ImmOrigin]() thin ->
+    Int) -> Int: return g()` prints `7`, where the pin rejects `g()` the
+    same way.
   - Found while landing R2428 (2026-11-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2643 A keyword-only function alias leaves an origin binder
+  unbound and is accepted**
+
+  `comptime plus_six = first[n=6]` over `def first[o: ImmOrigin, n:
+  Int](p: Pointer[Int, o])` checks, and `plus_six(Pointer(to=y))` prints
+  `8`, where the pin rejects the alias: "failed to infer parameter 'o',
+  specify the parameter or use '_' or '...' to unbind the parameter
+  explicitly".
+  - Cause: a function value's bracket binding (`bind_generic_callable_value`,
+    `checker/generics.rs`) leaves every origin slot the bracket does not
+    bind open, where the pin leaves one open only for an explicit `_` or
+    `...`.
+  - Lever: reject a function value's unspelled origin slot in the pin's
+    words.
+  - Probe: the shape above.
+  - Found while landing R2636 (2026-11-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

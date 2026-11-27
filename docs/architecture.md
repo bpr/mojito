@@ -5948,7 +5948,9 @@ of upstream's on-demand declaration resolution, and a call through such a
 constant is the call of the function it folds to (`folded_function_callee`,
 `infer_call`); a bracket over a function (`comptime g = twice[4]`) folds to
 its specialization's symbol, and a call through a module one is the call of
-that instance at the bound arguments, as upstream folds a call of a
+that instance at the bound arguments, each slot the bracket left open
+(`first[_, 6]`) holding the origin the call infers
+(`folded_call_arguments`), as upstream folds a call of a
 `#kgen.func.symbol` constant. VM compile-time execution freezes a function value back to its
 symbol (`crossing::vm_to_ct`), a closed constant may hold one as a leaf
 (`CtValue::is_closed_leaf`), and the elaborator and the native reachable set

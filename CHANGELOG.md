@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call through a `comptime` alias that leaves an origin open
+  (`comptime plus_six = first[_, 6]`) now records, in the callee's
+  application, the origin its argument binds instead of `_` (R2636), as
+  upstream's call of a partially bound `#kgen.func.symbol` infers it.
+  Output is unchanged.
+
 - A call's `VariadicList`, in its register type and its constructor's
   application, and a call's `VariadicPack` are now over their element
   references' untracked origin instead of `_` (R2635), as upstream's
