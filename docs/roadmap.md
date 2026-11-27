@@ -3504,6 +3504,13 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     already declared in this scope"), since `same_method_shape`
     (`checker/traits.rs`) compares run-time signatures only.
   - Upstream's `IntLiteral.__pow__` is such a pair (R1821).
+  - Probe: one struct conforming to `trait G` with `__getitem__[a:
+    AddressSpace](ref[_, a] self, i: Int) -> Int` and `trait H` with
+    `__getitem__[m: Bool, //, o: Origin[mut=m]](ref[o] self, i: Int) ->
+    Bool`, declaring both, and `x[5]` through each bound. It fails the
+    checked program, since both are `S.__getitem__$ov$Int` ("parameter
+    constant names parameter `m` ... that no enclosing declaration
+    binds"). The pin prints `6`, then `True` and `False`.
   - Found while planning R1166 (2026-10-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -4850,29 +4857,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `conformance/probes/equatable_witness_of_another_type.mojo`.
   - Found while the template's MIR replaced per-instance method clones
     (2026-10-01).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2449 A subscript's MIR call carries no deduced compile-time
-  arguments**
-
-  `s[5]` over `def __getitem__[a: AddressSpace](ref[_, a] self, i: Int)`
-  fails MIR verification ("required compile-time value parameter 'a' is
-  missing"), where the pin prints `5` (and `6` through a `GLOBAL`
-  pointer's `q[][5]`); `s.__getitem__(5)` runs.
-  - Cause: `MirSubscriptCall` holds only the bracket's `param_arg_regs`,
-    no `instantiated_args`, so a binder the check deduced (here from the
-    receiver's place) never reaches the verifier or the elaborator.
-  - `MirInstr::MethodCall` carries `instantiated_args`; the subscript
-    call should carry them the same way, through the MIR text form, the
-    verifier (`verify/subscripts.rs`), and `native::mono`.
-  - Probe: the same for `__setitem__` and a slice's accessor.
-  - Probe: `c[0]` over `def __getitem__[m: Bool, //, o: Origin[mut=m]](
-    ref[o] self, i: Int) -> Bool` returning `m` fails elaboration ("in
-    `C.__getitem__`: unsupported monomorphization cannot resolve
-    parameter `m`"), where the pin prints `True` on a `var c` and `False`
-    from a read-only caller.
-  - Found while landing R2412 (2026-11-21).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -11682,8 +11666,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     declaration's own infer-only binders and names the origin in the
     clause, keeping an address-space operand, as upstream's
     `addImplicitTypeParams` does. A declared `ref[o]` over such a pair
-    already binds and reads its `mut=` binder on every call path but a
-    subscript (R2449).
+    already binds and reads its `mut=` binder on every call path.
   - A prototype (2026-11-22) packaged the bundled library only after two
     fixes that already landed: a conformance's canonical `ref` contract
     names an own `mut=` binder by its place in the own list, and a tuple

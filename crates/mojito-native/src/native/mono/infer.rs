@@ -42,6 +42,10 @@ pub(super) struct ReceiverCall<'a> {
     /// callee's unused arguments ([`Bindings::reduced`]); a protocol or a
     /// member table reaches the full one.
     pub(super) reduced: bool,
+    /// The compile-time arguments the checker solved for the call, one per
+    /// binder the callee declares past its owner's, as a method call's
+    /// `instantiated_args`; empty for a demand no call records.
+    pub(super) instantiated: &'a [TyArg],
 }
 
 impl Specializer<'_> {
@@ -49,8 +53,10 @@ impl Specializer<'_> {
     /// `__getitem__`/`__setitem__` family) to its concrete instance. The
     /// receiver binds the owner's parameters and the destination's checked
     /// type anchors the result, mirroring the nullary iterator-step
-    /// inference; the checked parameter types solve the accessor's own
-    /// binders, an anonymous `Some[Trait]` index's among them. A subscript is a
+    /// inference; the call's recorded application and the checked
+    /// parameter types solve the accessor's own binders, one the receiver's
+    /// place decides (`ref[_, a] self`, `mut=m`) and an anonymous
+    /// `Some[Trait]` index's among them. A subscript is a
     /// call of its accessor, so it names the generator without the
     /// accessor's unused arguments, as upstream's rewritten call does, and
     /// its contract loses the arguments that bound them: returns the
@@ -170,7 +176,7 @@ impl Specializer<'_> {
                 (operands.registers, None),
                 &[],
                 &call.param_arg_regs,
-                &[],
+                &call.instantiated_args,
                 None,
                 None,
             )?
@@ -189,6 +195,7 @@ impl Specializer<'_> {
                     explicit: &explicit,
                     parameters: &parameters,
                     reduced: true,
+                    instantiated: &call.instantiated_args,
                 },
             )?;
             (target, bindings, arguments)
@@ -658,9 +665,12 @@ impl Specializer<'_> {
             }
         }
         let mut owner_covered = 0;
+        let mut declared_start = 0;
         if let Some((receiver_name, arguments)) = mojito_types::types::nominal_parts(receiver)
             && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name))
         {
+            declared_start =
+                owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
             bind_mutability_args(&struct_decl.param_decls, &arguments, &mut bindings);
             bind_ty_args(
                 &struct_decl.argument_view(),
@@ -696,6 +706,13 @@ impl Specializer<'_> {
             })?;
         unify(receiver_pattern, receiver, &mut bindings)
             .map_err(|e| self.error(Some(owner), format!("monomorphizing `{target}`: {e}")))?;
+        self.bind_instantiated_arguments(
+            owner,
+            target,
+            &declaration.param_decls[declared_start..],
+            demand.instantiated,
+            &mut bindings,
+        )?;
         let removed: &[VarId] = match self.functions.get(target) {
             Some(function) if bindings.reduced => &function.removed_args,
             _ => &[],

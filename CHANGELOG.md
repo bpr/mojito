@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A subscript now binds its accessor's compile-time parameters from the
+  arguments the checker solved for the call, as a method call does
+  (R2449). `s[5]`, `s[1:3]`, and `s[2] = 3` over accessors deducing
+  `a: AddressSpace` from a `ref[_, a] self` receiver, which failed
+  elaboration, now read the receiver's space, `GLOBAL` through a cast
+  pointer's `q[][5]` included. An accessor over `[m: Bool, //, o:
+  Origin[mut=m]](ref[o] self)` reads `True` on a `var c` and `False`
+  from a read-only caller, as at the pin
+  (`assets/ok/ref_receiver_address_space.mojo`).
+
 - A call through a trait bound now applies the requirement's own
   bracket arguments as compile-time attributes, as a call on a conformer
   does, instead of passing each in a run-time register (R394).

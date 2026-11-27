@@ -1,8 +1,10 @@
 # A `ref[...] self` clause is the receiver's `ref` contract, as on any
 # `ref` parameter: a call deduces its binders from the receiver's place
 # (its address space and origin), through a plain call, the explicit
-# `S.m(s)` form, and an operator, and a `ref` result over a binder the
-# clause names borrows the receiver.
+# `S.m(s)` form, an operator, and a subscript's `__getitem__` and
+# `__setitem__`, and a `ref` result over a binder the clause names borrows
+# the receiver. A subscript over `[m: Bool, //, o: Origin[mut=m]]` reads
+# `m` from the receiver's mutability.
 
 
 struct S:
@@ -28,6 +30,29 @@ struct S:
     def first[o: Origin](ref[o] self) -> ref[o] Self:
         return self
 
+    def __getitem__[a: AddressSpace](ref[_, a] self, i: Int) -> Int:
+        return Int(a._value) * 10 + i
+
+    def __getitem__[a: AddressSpace](ref[_, a] self, sl: Slice) -> Int:
+        return Int(a._value) * 100
+
+    def __setitem__[a: AddressSpace](ref[_, a] self, i: Int, v: Int):
+        print("set", Int(a._value), i, v)
+
+
+struct M:
+    var x: Int
+
+    def __init__(out self):
+        self.x = 0
+
+    def __getitem__[m: Bool, //, o: Origin[mut=m]](ref[o] self, i: Int) -> Bool:
+        return m
+
+
+def read_only(c: M):
+    print(c[0])
+
 
 def main():
     var s = S()
@@ -41,3 +66,9 @@ def main():
     print(q[].space[AddressSpace.GLOBAL]())
     s.first().x = 5
     print(s.x)
+    print(s[5], q[][5], s[1:3], q[][1:3])
+    s[2] = 3
+    q[][4] = 6
+    var c = M()
+    print(c[0])
+    read_only(c)
