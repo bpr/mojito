@@ -415,6 +415,15 @@ pub struct CheckedIteratorCall {
     /// declaring trait, or the standard `Iterator` a loop falls back to.
     #[serde(default)]
     pub refined_bound: Option<Vec<String>>,
+    /// The selected `__next__`'s declared compile-time parameter list and
+    /// the loop's solved arguments over it, as an ordinary method call's
+    /// [`CheckedCallContract::param_decls`] and
+    /// [`CheckedCallContract::instantiated_args`]; empty when it declares
+    /// none.
+    #[serde(default)]
+    pub param_decls: Vec<mojito_types::types::ParamDecl>,
+    #[serde(default)]
+    pub instantiated_args: Vec<mojito_types::types::TyArg>,
 }
 
 /// One resolved generic free-function application at a call site: the source
@@ -484,6 +493,17 @@ pub struct IterationProtocol {
     /// spells ([`CheckedCallContract::refined_bound`]).
     #[serde(default)]
     pub prepare_refined_bound: Option<Vec<String>>,
+    /// The `prepare` `__iter__`'s declared compile-time parameter list and
+    /// the arguments the loop's call solves over it, the receiver's
+    /// clause (`ref[o] self`) binding its origin binders from the source's
+    /// place, as an ordinary `source.__iter__()` call's
+    /// [`CheckedCallContract::param_decls`] and
+    /// [`CheckedCallContract::instantiated_args`]; empty when it declares
+    /// none.
+    #[serde(default)]
+    pub prepare_param_decls: Vec<mojito_types::types::ParamDecl>,
+    #[serde(default)]
+    pub prepare_instantiated_args: Vec<mojito_types::types::TyArg>,
     /// The type of the iterator `prepare` produces: its `__iter__`
     /// result, resolved at the loop site (`_ListIter[Int,
     /// origin_of(xs)]`, or `C.IteratorType[origin_of(self)]` over a generic

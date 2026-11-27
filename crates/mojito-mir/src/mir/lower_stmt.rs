@@ -4565,8 +4565,8 @@ impl<'a> Flatten<'a> {
             receiver_convention: owned.then_some(ArgConvention::Var),
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
-            param_decls: Vec::new(),
-            instantiated_args: Vec::new(),
+            param_decls: protocol.prepare_param_decls.clone(),
+            instantiated_args: protocol.prepare_instantiated_args.clone(),
             spread: None,
             refined_bound: protocol
                 .prepare_refined_bound
@@ -4619,8 +4619,8 @@ impl<'a> Flatten<'a> {
             receiver_convention: Some(ArgConvention::Mut),
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
-            param_decls: Vec::new(),
-            instantiated_args: Vec::new(),
+            param_decls: call.param_decls.clone(),
+            instantiated_args: call.instantiated_args.clone(),
             spread: None,
             refined_bound: call.refined_bound.clone().map(MirRefinedBound::boxed),
         });

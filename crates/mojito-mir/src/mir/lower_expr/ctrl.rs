@@ -781,6 +781,8 @@ impl<'a> Flatten<'a> {
                         prepare_raises: None,
                         prepare_receiver: None,
                         prepare_refined_bound: None,
+                        prepare_param_decls: Vec::new(),
+                        prepare_instantiated_args: Vec::new(),
                         iterator_ty: iterator_ty.clone().unwrap_or_else(Ty::error),
                         next: None,
                         exhaustion: None,

@@ -11,6 +11,18 @@ use mojito_types::types::TyKind;
 /// operation's description and its error type.
 pub(super) type IteratorRaises = Vec<(String, Ty)>;
 
+/// One iterator-protocol method instantiated at the loop
+/// ([`Checker::instantiate_iteration_method`]): its result, the reference
+/// it returns by its `ref` result convention, the error it raises, and the
+/// call's solved arguments over its whole declared list (empty when it
+/// declares none).
+pub(super) struct IterationMethod {
+    pub(super) result: Ty,
+    pub(super) reference: Option<mojito_types::origin::RefTy>,
+    pub(super) error: Option<Ty>,
+    pub(super) instantiated_args: Vec<TyArg>,
+}
+
 impl Checker {
     /// Select source ownership independently from the loop target convention.
     /// A top-level transfer is the source-language request for consuming
@@ -25,13 +37,15 @@ impl Checker {
 
     /// The complete protocol of one loop site, shared by `for` statements,
     /// comprehensions, and a template's instance: the iterable type's
-    /// `__iter__`/`__next__` selection, resolved against the place the loop
-    /// borrows (`None` for a temporary) and that binding's mutability, with
-    /// the target's binding plan attached. The `__iter__` raises the
+    /// `__iter__`/`__next__` selection, its `__iter__` called on the
+    /// iterable expression `iter` as an ordinary method call is, resolved
+    /// against the place the loop borrows (`None` for a temporary) and that
+    /// binding's mutability, with the target's binding plan attached. The `__iter__` raises the
     /// selection found are returned rather than demanded, since only a loop
     /// site checks them against its raising context.
     pub(super) fn loop_site_protocol(
         &self,
+        iter: &Expr,
         iter_ty: &Ty,
         mode: mojito_checked::checked::IterationMode,
         binding: mojito_ast::ast::BindingMode,
@@ -40,7 +54,7 @@ impl Checker {
     ) -> Result<(mojito_checked::checked::IterationProtocol, IteratorRaises), TypeError> {
         let mut raises = Vec::new();
         let (mut yielded_ty, mut protocol) =
-            match self.iteration_protocol(iter_ty, mode, &mut raises) {
+            match self.iteration_protocol(iter_ty, Some(iter), mode, &mut raises) {
                 // A temporary takes `__iter__(var self)` where no borrowed
                 // `__iter__` applies (`for x in map[f]([1, 2])`), as the pin's
                 // ordinary `__iter__` call on an rvalue resolves it.
@@ -51,6 +65,7 @@ impl Checker {
                     raises.clear();
                     self.iteration_protocol(
                         iter_ty,
+                        Some(iter),
                         mojito_checked::checked::IterationMode::Owned,
                         &mut raises,
                     )
@@ -325,10 +340,12 @@ impl Checker {
     /// Resolve a loop's complete iterator protocol.  In particular, owned
     /// iteration selects `__iter__(var self)` and never silently falls back to a
     /// borrowed `__iter__`.  The selected symbols cross the checked boundary so
-    /// HIR/MIR/VM do not repeat overload selection.
+    /// HIR/MIR/VM do not repeat overload selection. `receiver` is the
+    /// iterable expression the loop calls `__iter__` on, when there is one.
     pub(super) fn iteration_protocol(
         &self,
         ty: &Ty,
+        receiver: Option<&Expr>,
         mode: mojito_checked::checked::IterationMode,
         raises: &mut IteratorRaises,
     ) -> Result<(Ty, mojito_checked::checked::IterationProtocol), TypeError> {
@@ -346,6 +363,8 @@ impl Checker {
                     prepare_raises: None,
                     prepare_receiver: None,
                     prepare_refined_bound: None,
+                    prepare_param_decls: Vec::new(),
+                    prepare_instantiated_args: Vec::new(),
                     iterator_ty: ty.clone(),
                     next: None,
                     exhaustion: None,
@@ -387,7 +406,7 @@ impl Checker {
         match ty.kind() {
             TyKind::VariadicPack(element) => Ok(builtin((*element).clone())),
             struct_ty if let Some(_) = struct_ty.as_non_pointer_struct() => {
-                self.struct_iteration_protocol(ty, mode, raises)
+                self.struct_iteration_protocol(ty, receiver, mode, raises)
             }
             TyKind::Param { .. } => {
                 let bounds = &self.refined_bound(ty).unwrap_or_default();
@@ -440,6 +459,8 @@ impl Checker {
                         prepare_receiver: (!owned && self.memory_only(ty))
                             .then_some(mojito_types::origin::Mutability::Immutable),
                         prepare_refined_bound: recorded_selecting_bound(ty, iter_bound),
+                        prepare_param_decls: Vec::new(),
+                        prepare_instantiated_args: Vec::new(),
                         next: Some(Box::new(mojito_checked::checked::CheckedIteratorCall {
                             target: method_lowered_name(TRAIT_DISPATCH, "__next__", &next, None),
                             result_ty: element,
@@ -449,6 +470,8 @@ impl Checker {
                                 mojito_checked::checked::CheckedResultAdapter::CopyIteratorReference,
                             ),
                             refined_bound: recorded_selecting_bound(&iterator_ty, next_bound),
+                            param_decls: Vec::new(),
+                            instantiated_args: Vec::new(),
                         })),
                         iterator_ty,
                         exhaustion: Some(exhaustion),
@@ -471,6 +494,7 @@ impl Checker {
     pub(super) fn struct_iteration_protocol(
         &self,
         c_ty: &Ty,
+        receiver: Option<&Expr>,
         mode: mojito_checked::checked::IterationMode,
         raises: &mut IteratorRaises,
     ) -> Result<(Ty, mojito_checked::checked::IterationProtocol), TypeError> {
@@ -506,11 +530,27 @@ impl Checker {
         let matching = convention_matched
             .iter()
             .filter_map(|sig| {
-                self.instantiate_iteration_method(cname, cinfo, ctargs, sig)
-                    .map(|(ret, _, error)| (*sig, ret, error))
+                self.instantiate_iteration_method(
+                    cname,
+                    (cinfo, ctargs),
+                    sig,
+                    receiver.map(|receiver| (c_ty, receiver)),
+                )
+                .map(|method| (*sig, method))
             })
             .collect::<Vec<_>>();
-        let [(iter_sig, it_ty, iter_error)] = matching.as_slice() else {
+        let [
+            (
+                iter_sig,
+                IterationMethod {
+                    result: it_ty,
+                    error: iter_error,
+                    instantiated_args: iter_arguments,
+                    ..
+                },
+            ),
+        ] = matching.as_slice()
+        else {
             if matching.len() > 1 {
                 return Err(TypeError::BadCall {
                     func: format!("{cname}.__iter__"),
@@ -571,11 +611,22 @@ impl Checker {
         let applicable_next = next_candidates
             .iter()
             .filter_map(|sig| {
-                self.instantiate_iteration_method(iname, iinfo, itargs, sig)
-                    .map(|(ret, reference, error)| (sig, ret, reference, error))
+                self.instantiate_iteration_method(iname, (iinfo, itargs), sig, None)
+                    .map(|method| (sig, method))
             })
             .collect::<Vec<_>>();
-        let [(next_sig, element, reference_result, next_error)] = applicable_next.as_slice() else {
+        let [
+            (
+                next_sig,
+                IterationMethod {
+                    result: element,
+                    reference: reference_result,
+                    error: next_error,
+                    instantiated_args: next_arguments,
+                },
+            ),
+        ] = applicable_next.as_slice()
+        else {
             return Err(no_method(it_ty, "__next__"));
         };
         if !matches!(
@@ -617,6 +668,8 @@ impl Checker {
             raises: next_error.clone(),
             result_adapter: None,
             refined_bound: None,
+            param_decls: declared_call_list(next_sig, next_arguments),
+            instantiated_args: next_arguments.clone(),
         };
         // The declared interior projection of the yielded reference. It is
         // retained only while the instantiated origin is still the abstract
@@ -668,6 +721,8 @@ impl Checker {
                     _ => None,
                 },
                 prepare_refined_bound: None,
+                prepare_param_decls: declared_call_list(iter_sig, iter_arguments),
+                prepare_instantiated_args: iter_arguments.clone(),
                 iterator_ty: it_ty.clone(),
                 next: Some(Box::new(checked_next)),
                 exhaustion: Some(exhaustion),
@@ -718,14 +773,17 @@ impl Checker {
     /// either its own compile-time parameters or the receiver struct's
     /// parameters (`Self.T` is canonicalized to `T`). A declaration which is
     /// present by name but unavailable for this specialization is not a protocol
-    /// implementation.
+    /// implementation. `receiver` is the value the loop calls the method
+    /// on, when it is a source expression: its place binds the receiver
+    /// clause's origin binders (`ref[o] self`), as an ordinary method call's
+    /// receiver does.
     pub(super) fn instantiate_iteration_method(
         &self,
         owner: &str,
-        info: &StructInfo,
-        receiver_arguments: &[TyArg],
+        (info, receiver_arguments): (&StructInfo, &[TyArg]),
         signature: &MethodSig,
-    ) -> Option<(Ty, Option<mojito_types::origin::RefTy>, Option<Ty>)> {
+        receiver: Option<(&Ty, &Expr)>,
+    ) -> Option<IterationMethod> {
         if !signature.has_self || !signature.params.is_empty() {
             return None;
         }
@@ -743,14 +801,7 @@ impl Checker {
             .kw_variadic
             .as_ref()
             .map(|ty| substitute(ty, &receiver_subst));
-        let MethodInstantiation {
-            variadic,
-            kw_variadic,
-            subst: method_subst,
-            arguments: method_arguments,
-            values: call_values,
-            ..
-        } = self
+        let instantiated = self
             .instantiate_method_generics(
                 &format!("{owner} iterator protocol"),
                 signature,
@@ -760,9 +811,18 @@ impl Checker {
                 &[],
                 &[],
                 &[],
-                None,
+                receiver,
             )
             .ok()?;
+        let MethodInstantiation {
+            variadic,
+            kw_variadic,
+            subst: method_subst,
+            arguments: method_arguments,
+            declared,
+            values: call_values,
+            ..
+        } = &instantiated;
         // Iterator dunders have no explicit runtime arguments. A variadic or
         // keyword-variadic declaration is not the exact protocol shape even
         // though an empty ordinary call could technically invoke it.
@@ -771,7 +831,7 @@ impl Checker {
         }
         if !self.method_constraints_apply(
             signature,
-            &method_arguments,
+            method_arguments,
             &info.params,
             receiver_arguments,
         ) {
@@ -787,19 +847,22 @@ impl Checker {
         );
         let instantiate = |ty: &Ty| {
             let substituted = substitute(
-                &substitute(
-                    &self.bind_instance_mutabilities(ty, info, receiver_arguments),
-                    &receiver_subst,
+                &instantiated.bound_result(
+                    self,
+                    &substitute(
+                        &self.bind_instance_mutabilities(ty, info, receiver_arguments),
+                        &receiver_subst,
+                    ),
                 ),
-                &method_subst,
+                method_subst,
             );
             self.resolve_dependent_ty(&substituted, &values)
-                .and_then(|closed| self.resolve_call_dependent_ty(&closed, &call_values))
+                .and_then(|closed| self.resolve_call_dependent_ty(&closed, call_values))
                 .unwrap_or(substituted)
         };
         let referent = instantiate(&signature.ret);
         let mut semantic_arguments = receiver_arguments.to_vec();
-        semantic_arguments.extend(method_arguments);
+        semantic_arguments.extend(method_arguments.iter().cloned());
         let reference_result = signature.call_ref_return().map(|reference| {
             instantiate_iterator_reference(
                 &reference,
@@ -813,13 +876,19 @@ impl Checker {
             || referent.clone(),
             |reference| TyKind::Ref(reference.clone()).into(),
         );
-        Some((
+        Some(IterationMethod {
             result,
-            reference_result,
-            signature
+            reference: reference_result,
+            error: signature
                 .raises
                 .then(|| signature.error.as_ref().map_or_else(Ty::error, instantiate)),
-        ))
+            instantiated_args: super::generics::method_declared_arguments(
+                signature,
+                method_arguments,
+                declared,
+            )
+            .unwrap_or_default(),
+        })
     }
 
     /// The typed error a loop over a generic bound catches through the
@@ -1098,4 +1167,15 @@ fn iterator_bool_argument(arguments: &[TyArg], index: usize) -> Option<bool> {
     });
     let only = values.next()?;
     values.next().is_none().then_some(only)
+}
+
+/// The declared compile-time parameter list an iterator-protocol call
+/// carries beside its solved `arguments`: `signature`'s, when the call
+/// solved it.
+fn declared_call_list(signature: &MethodSig, arguments: &[TyArg]) -> Vec<ParamDecl> {
+    if arguments.is_empty() {
+        Vec::new()
+    } else {
+        signature.declared.clone()
+    }
 }

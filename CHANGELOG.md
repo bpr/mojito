@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A loop's implicit `__iter__` call now binds the callee's compile-time
+  parameters from the iterable, as an ordinary `c.__iter__()` call does,
+  and carries its declared list and solved arguments, as does its
+  `__next__` call (R2514). `for b in c` over `def __iter__[m: Bool, //,
+  o: Origin[mut=m]](ref[o] self)`, which was rejected at iterator
+  selection, now runs and reads `True` on a `var c` and `False` from a
+  read-only caller or a temporary, as the pin does, in `for` statements
+  and comprehensions alike.
+
 - A call that leaves an origin binder unbound — neither its bracket nor
   its arguments bind it, and no parameter names it — is now rejected as
   upstream fails to infer it, instead of running (R2439): `f(1)` over

@@ -11678,33 +11678,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2514 A loop's implicit `__iter__` call carries none of its
-  callee's compile-time parameters**
-
-  `for b in c` over `def __iter__[m: Bool, //, o: Origin[mut=m]](ref[o]
-  self) -> It` fails MIR verification ("method-call compile-time
-  parameter metadata does not match 'C.__iter__'"), where the pin runs
-  the loop and the iterator reads `True` on a `var c` and `False` from a
-  read-only caller.
-  - The checked `IterationProtocol` records the selected `__iter__` as a
-    bare symbol (`prepare`), so `Flatten::call_iter`
-    (`mir/lower_stmt.rs`) emits its `MethodCall` with empty
-    `param_decls` and `instantiated_args`.
-  - Upstream's `for` emits an ordinary `__iter__` call, which binds every
-    declared parameter from the source's place, as any method call does.
-  - Lever: carry the callee's declared list and the loop's solved
-    arguments on the protocol (as `CheckedIteratorCall` does for
-    `__next__`), and have both the VM and native paths read them.
-  - Probe: `for v in s` over `def __iter__[o: Origin](ref[o] self) -> It`
-    fails the same way ("call of 'S.__iter__' carries 0 of its 1
-    compile-time arguments"), where the pin runs the loop. A method call
-    `s.__iter__()` binds `o` from the receiver.
-  - It blocks R2516: once every `ref self` declares its implicit binders,
-    every bundled `__iter__(ref self)` is such a callee.
-  - Found while landing R2471 (2026-11-22).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2516 A bare `ref` parameter declares no implicit `x_is_mut` and
   origin binders**
 
@@ -11744,8 +11717,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     clause, keeping an address-space operand, as upstream's
     `addImplicitTypeParams` does. A declared `ref[o]` over such a pair
     already binds and reads its `mut=` binder on every call path but a
-    loop's `__iter__` (R2514), a call through a bound (R394), and a
-    subscript (R2449).
+    call through a bound (R394) and a subscript (R2449).
   - A prototype (2026-11-22) packaged the bundled library only after two
     fixes that already landed: a conformance's canonical `ref` contract
     names an own `mut=` binder by its place in the own list, and a tuple

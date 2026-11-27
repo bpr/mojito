@@ -89,6 +89,7 @@ impl Checker {
                         let iter_ty = self.convert_literal_iterable(iter, self.infer(iter)?);
                         let (source, source_mutable) = self.iteration_source(iter);
                         let (protocol, raises) = self.loop_site_protocol(
+                            iter,
                             &iter_ty,
                             Self::iteration_mode(iter),
                             *binding,

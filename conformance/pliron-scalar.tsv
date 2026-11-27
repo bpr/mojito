@@ -482,6 +482,7 @@ assets/ok/for_destructuring_closure_capture.mojo	-	ineligible	no-scalar-entry-sh
 assets/ok/for_destructuring_lifetimes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/for_destructuring_targets.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/for_destructuring_tuple_not_copied.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/for_iter_own_origin_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/forward_struct_reference_iterator.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/forwarded_argument_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/forwarded_callable_binder_argument.mojo	-	ineligible	no-scalar-entry-shape
