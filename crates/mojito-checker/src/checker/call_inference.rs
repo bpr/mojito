@@ -2864,7 +2864,11 @@ impl Checker {
         let Some(signature) =
             signature.filter(|signature| signature.address_space.is_symbolic() || lent.is_some())
         else {
-            return (parameter.clone(), actual.clone());
+            let converted = self.view_conversion_actual((parameter, actual), argument, decls);
+            return (
+                parameter.clone(),
+                converted.unwrap_or_else(|| actual.clone()),
+            );
         };
         let reference = |referent: &Ty, origin, mutability, address_space| {
             Ty::from(TyKind::Ref(RefTy {
@@ -2899,6 +2903,86 @@ impl Checker {
             ),
             reference(actual, lent.0, lent.1, self.place_address_space(argument)),
         )
+    }
+
+    /// The type `argument` solves as where it converts implicitly to
+    /// `parameter`, a view naming one of the callee's own origin binders
+    /// (`decls`), through a constructor borrowing it by `ref
+    /// [Self.origin]`: the instance that constructor builds, its origin the
+    /// argument's place and the `mut=` binder governing that origin the
+    /// place's mutability, as upstream unifies the parameter with the
+    /// converted value's type and so solves the binder and its `mut=`
+    /// binder together (`hx(bs)` over `hx[m: Bool, //, o: Origin[mut=m]](s:
+    /// Span[Byte, o])` binds `o` to `bs` and `m` to its capability).
+    pub(super) fn view_conversion_actual(
+        &self,
+        (parameter, actual): (&Ty, &Ty),
+        argument: &Expr,
+        decls: &[ParamDecl],
+    ) -> Option<Ty> {
+        use mojito_types::origin::Origin;
+        use mojito_types::types::OriginMutability;
+        let (name, arguments) = parameter.kind().as_non_pointer_struct()?;
+        if actual
+            .kind()
+            .as_non_pointer_struct()
+            .is_some_and(|(source, _)| source == name)
+        {
+            return None;
+        }
+        let own = |id| super::origins::declared_origin_binders(decls).any(|own| own == id);
+        if !super::origins::names_origin_binder_in(parameter, &own) {
+            return None;
+        }
+        let params = &self.structs.get(name)?.params;
+        if params.len() != arguments.len() {
+            return None;
+        }
+        // The target the conversion builds before the call binds the
+        // callee's binders: their slots open, as the solved parameter's are.
+        let open: Vec<_> = params
+            .iter()
+            .zip(arguments)
+            .filter_map(|(decl, argument)| match (decl, argument) {
+                (
+                    ParamDecl::Origin {
+                        mutability: OriginMutability::Binder(binder),
+                        ..
+                    },
+                    TyArg::Origin(Origin::Param(id)),
+                ) if own(*id) => Some(binder.id.clone()),
+                _ => None,
+            })
+            .collect();
+        let target: Ty = TyKind::Struct(
+            name.clone(),
+            params
+                .iter()
+                .zip(arguments)
+                .map(|(decl, argument)| match argument {
+                    TyArg::Origin(Origin::Param(id)) if own(*id) => TyArg::Origin(Origin::Unbound),
+                    TyArg::Val(value)
+                        if open.contains(decl.id()) && !matches!(value, CtValue::Bool(_)) =>
+                    {
+                        TyArg::Val(CtValue::Deferred(decl.binder()))
+                    }
+                    argument => argument.clone(),
+                })
+                .collect(),
+        )
+        .into();
+        let selected = self
+            .implicit_conversion_constructor(actual, &target)
+            .ok()??;
+        let id = selected.borrowed_origin?;
+        let (origin, lent) = self.reference_argument(argument)?;
+        Some(super::instance_with_origin(
+            params,
+            &selected.constructed,
+            id,
+            &origin,
+            |decl| self.origin_mutability_slot(decl, &origin, lent),
+        ))
     }
 
     /// A generic callee's argument patterns `use_params`, parameters,

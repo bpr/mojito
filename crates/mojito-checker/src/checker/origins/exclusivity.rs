@@ -489,6 +489,17 @@ impl Checker {
                 // what it views, where the bundled one keeps a `mut`
                 // parameter (R1916).
                 let read_only = mojito_types::types::is_stdlib_string_span_struct(name);
+                // An origin whose `mut=` binder the instance closes to
+                // `False` is only read (`Span[False, T, o]`), whatever its
+                // place lends; any other is judged by its place.
+                let read_through = |binder: &mojito_types::param_expr::ParamId| {
+                    ParamDecl::aligned_pairs(&info.params, arguments).any(
+                        |(candidate, argument)| {
+                            candidate.id() == binder
+                                && matches!(argument, TyArg::Val(CtValue::Bool(false)))
+                        },
+                    )
+                };
                 for ((_, decl), origin) in info
                     .origin_decls()
                     .zip(ParamDecl::origin_arguments(arguments))
@@ -499,6 +510,10 @@ impl Checker {
                             mutability: mojito_types::types::OriginMutability::Fixed(fixed),
                             ..
                         } => Some(*fixed),
+                        ParamDecl::Origin {
+                            mutability: mojito_types::types::OriginMutability::Binder(binder),
+                            ..
+                        } if read_through(&binder.id) => Some(false),
                         _ => None,
                     };
                     self.record_origin_places(access, origin, mutable);

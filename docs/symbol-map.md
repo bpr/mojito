@@ -864,7 +864,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   origin binders, read off its checked `ParamDecl::Origin`s
   (`StructInfo::origin_decls`), from a `Pointer[Self.T, Self.origin]` argument, a
   `ref [Self.origin]` argument, or a struct-typed argument carrying the binder
-  among its arguments, check an explicitly applied origin, and return
+  among its arguments (a source converting implicitly to that struct as
+  the view its conversion builds, `call_inference.rs::view_conversion_actual`,
+  which `reference_solve_pair` and `reference_solve_pairs` read too, so a
+  call's or construction's one solve binds the binder and its `mut=` binder
+  from the converted type), check an explicitly applied origin, and return
   `ConstructorOriginBindings`, whose `substitute` rewrites the parameter types
   and whose `bind_origins` fills the constructed value's origin arguments,
   each at its binder's position (`constructed_type`, over

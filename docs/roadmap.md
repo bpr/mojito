@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2660**.
+Next free ID: **R2661**.
 
 ## Ordered Work
 
@@ -4411,39 +4411,29 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2656 An origin binder solved through an implicit view conversion
-  leaves its `mut=` binder unsolved**
+- [ ] **R2660 A `@fieldwise_init` construction does not convert its
+  arguments to its fields' view types as an initializer call does**
 
-  `hx(bs)` over `def hx[m: Bool, //, o: Origin[mut=m]](s: Span[Byte, o])`
-  reading `s.mut`, with a `var bs: List[Byte]`, fails elaboration ("in
-  `hx`: unsupported monomorphization cannot resolve parameter `m`"), where
-  the pin prints `True`.
-  - The call solves `o` from the borrowed place of the conversion's `ref
-    [Self.origin] list` parameter (`conversion_borrow_origins`,
-    `checker/origins/ref_params.rs`), but records no value for the binder
-    `o`'s `Origin[mut=m]` names.
-  - `Checker::bind_callee_origins` (`checker/origins/construct.rs`) fills
-    `OriginBindings::mutabilities` for a direct `Pointer` argument only.
-  - Upstream solves the pair together: the binder's type `Origin[mut=m]`
-    unifies `m` with the solved origin's mutability.
-  - Lever: when a callee origin binder is solved, bind the value binder its
-    `Origin[mut=m]` names to the origin's `decided_origin_mutability`, so
-    the call's recorded application (`declared_call_arguments`) holds a
-    closed `Bool` in `m`'s slot.
-  - The same call not reading `m`, or over `[o: ImmOrigin]`, already runs,
-    and so do `hx(Span(bs))` and an `ImmOrigin` span spelled out (`True`,
-    `False`).
-  - Probe: `g(a)` over `def g[m: Bool, //, o: Origin[mut=m]](s:
-    StringSpan[o]) -> Bool: return m` and a `String`, the same failure (the
-    pin rejects this call only because its `StringSpan` has no `mut`,
-    R1916).
-  - Probe: `h(xs)` over `def h(v: V[Int, _]) -> Bool: return v.mut` and a
-    user `V[mut: Bool, //, T: Copyable, origin: Origin[mut=mut]]` with an
-    `@implicit __init__(out self, ref [Self.origin] xs: List[Self.T])`
-    prints `True` at the pin. It fails the same way once R2376 declares the
-    binder pair.
-  - R2515 is the conversion initializer's own binders, not the callee's.
-  - Found while planning R2376 (2026-11-27).
+  `F(bs)` over `@fieldwise_init struct F[m: Bool, //, o: Origin[mut=m]]`
+  with one field `s: Span[Byte, Self.o]` and a `var bs: List[Byte]` is
+  rejected ("value of type 'List[UInt8]' cannot be implicitly copied …
+  (field 1 of 'F')"), where the pin prints `True` for `F(bs)` reading
+  `Self.m`. `F(Span(bs))` runs.
+  - Upstream synthesizes `__init__(out self, var s: Span[Byte, Self.o])`
+    and calls it like any initializer: the argument converts to the
+    parameter type, and its conversion's result type solves `o` and `m`.
+  - The fieldwise arm of `Checker::infer_construction_ranked`
+    (`checker/declarations.rs`) types the source with
+    `infer_storage_value` and checks the source itself for consumption
+    (`check_consuming`), not the conversion's temporary.
+  - `bind_fieldwise_origins` (`checker/origins/construct.rs`) reads the
+    source type, so no view conversion binds the struct's origin binder
+    there. A declared initializer solves it through
+    `view_conversion_actual` (`checker/call_inference.rs`).
+  - Probe: `len(G(bs).s)` over `@fieldwise_init struct G[o: ImmOrigin]`
+    with the same field fails ("no overload matches" for `len`), where
+    the pin prints `3`.
+  - Found while landing R2656 (2026-11-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -11994,8 +11984,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - With the gate removed, the bundled library stops packaging at the
     first literal `+ "…"` (R2657). Past it, the `Hasher` and `Writer`
     requirements fail (R2658, and R2397 for a conformer with origin
-    parameters), and a conversion's `mut=` stays unsolved (R2656). The
-    site list past R2657 is unverified: if a packaging failure appears
+    parameters). A conversion's `mut=` now solves (R2656), so the user
+    `V` probe of `h(xs)` over `def h(v: V[Int, _])` should print `True`
+    once the gate is gone. The site list past R2657 is unverified: if a packaging failure appears
     that is none of these, file it and keep the gate.
   - Check packaging with a fresh `MOJITO_CACHE_DIR`. A cached package
     masks the failure.

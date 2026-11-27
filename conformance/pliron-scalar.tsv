@@ -893,6 +893,7 @@ assets/ok/origin_binder_decided_mutability.mojo	-	ineligible	no-scalar-entry-sha
 assets/ok/origin_binder_mutable_ref_result.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_binder_ref_result_keeps_pointer_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_binder_result_keeps_argument.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/origin_binder_solved_through_view_conversion.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_binder_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_comptime_alias.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_declared_values.mojo	-	ineligible	no-scalar-entry-shape

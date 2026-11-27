@@ -805,12 +805,13 @@ impl Checker {
         for ((index, expression, pattern), actual) in bound.iter().zip(arg_tys) {
             let parameter = sig.names.get(*index).map_or("?", String::as_str);
             let context = || format!("argument '{parameter}' to '{struct_name}.{callee}'");
+            let converted = self.view_conversion_actual((pattern, actual), expression, params);
             Self::bind_origin_pattern(
                 struct_name,
                 &context,
                 params,
                 pattern,
-                actual,
+                converted.as_ref().unwrap_or(actual),
                 explicit,
                 &mut bindings,
             )?;

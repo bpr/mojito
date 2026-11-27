@@ -3572,7 +3572,7 @@ impl Checker {
     /// it stands.
     pub(super) fn reference_solve_pairs(
         &self,
-        sig: &MethodSig,
+        (sig, struct_params): (&MethodSig, &[ParamDecl]),
         slots: &[(usize, &Expr, &Ty)],
         patterns: &[Ty],
         actuals: &[Ty],
@@ -3582,12 +3582,17 @@ impl Checker {
             .zip(actuals)
             .enumerate()
             .map(|(position, (pattern, actual))| match slots.get(position) {
-                Some((index, expression, _)) => self.reference_solve_pair(
-                    sig.ref_params.get(*index).and_then(Option::as_ref),
-                    (pattern, actual),
-                    expression,
-                    &sig.declared,
-                ),
+                Some((index, expression, _)) => {
+                    let (pattern, actual) = self.reference_solve_pair(
+                        sig.ref_params.get(*index).and_then(Option::as_ref),
+                        (pattern, actual),
+                        expression,
+                        &sig.declared,
+                    );
+                    let converted =
+                        self.view_conversion_actual((&pattern, &actual), expression, struct_params);
+                    (pattern, converted.unwrap_or(actual))
+                }
                 None => (pattern.clone(), actual.clone()),
             })
             .unzip()
@@ -4122,8 +4127,12 @@ impl Checker {
                     .collect::<Result<Vec<_>, _>>()?;
                 let arg_tys = self.bound_construction_arguments(name, sig, &bound_slots, solved)?;
                 Self::reject_unconstrained_pack(name, &decls, param_args, constructed, &params)?;
-                let (solve_patterns, solve_actuals) =
-                    self.reference_solve_pairs(sig, &bound_slots, &params, &arg_tys);
+                let (solve_patterns, solve_actuals) = self.reference_solve_pairs(
+                    (sig, &info.params),
+                    &bound_slots,
+                    &params,
+                    &arg_tys,
+                );
                 let (instance_patterns, instance_actuals) = self.constructed_unification(
                     name,
                     constructed,
@@ -4169,7 +4178,10 @@ impl Checker {
                     sig,
                     self.self_instance_ty(name).as_ref(),
                 ));
-                let values = solved_value_bindings(&decls, &tyargs);
+                // Each origin's `mut=` binder takes the mutability its bound
+                // origin decides, as upstream binds every declared parameter.
+                let mut values = solved_value_bindings(&decls, &tyargs);
+                values.extend(self.own_mutability_values(&info.params, &pointer_origins));
                 let struct_subst = struct_binders_only(&subst, sig);
                 // The struct's own origin binders are bound before its type
                 // parameters, so an argument type's binder of the same slot
@@ -4185,8 +4197,12 @@ impl Checker {
                         )
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                let (own_patterns, own_actuals) =
-                    self.reference_solve_pairs(sig, &bound_slots, &struct_bound, &arg_tys);
+                let (own_patterns, own_actuals) = self.reference_solve_pairs(
+                    (sig, &info.params),
+                    &bound_slots,
+                    &struct_bound,
+                    &arg_tys,
+                );
                 let own = self.solve_constructor_own_params(
                     name,
                     sig,
@@ -4380,8 +4396,12 @@ impl Checker {
                     .iter()
                     .map(|(_, pattern, _)| pattern.clone())
                     .collect();
-                let (solve_patterns, solve_actuals) =
-                    self.reference_solve_pairs(sig, &bound_slots, &patterns, &arg_tys);
+                let (solve_patterns, solve_actuals) = self.reference_solve_pairs(
+                    (sig, &info.params),
+                    &bound_slots,
+                    &patterns,
+                    &arg_tys,
+                );
                 let (instance_patterns, instance_actuals) = self.constructed_unification(
                     name,
                     constructed,
@@ -4477,10 +4497,13 @@ impl Checker {
                         }
                     };
                     // The struct's binders only: the constructor's own are
-                    // solved apart, against these.
+                    // solved apart, against these. Each origin's `mut=`
+                    // binder takes the mutability its bound origin decides.
+                    let mut values = solved_value_bindings(&decls, &tyargs);
+                    values.extend(self.own_mutability_values(&info.params, &pointer_origins));
                     let bindings = AssocBindings {
                         types: struct_binders_only(&subst, sig),
-                        values: solved_value_bindings(&decls, &tyargs),
+                        values,
                         ids: mojito_types::param_expr::ParamBindings::new(),
                         origins: HashMap::new(),
                     };
@@ -4493,7 +4516,7 @@ impl Checker {
                                 })
                                 .collect();
                             let (own_patterns, own_actuals) = self.reference_solve_pairs(
-                                sig,
+                                (sig, &info.params),
                                 &bound_slots,
                                 &own_patterns,
                                 &arg_tys,
@@ -6158,10 +6181,25 @@ impl Checker {
             Ok(bindings) => bindings,
             Err(error) => return Ok(Err(Some(error))),
         };
+        // Each origin's `mut=` binder takes the mutability its bound origin
+        // decides, as upstream binds every declared parameter.
+        let values: HashMap<_, _> = self
+            .own_mutability_values(struct_params, &bindings)
+            .into_iter()
+            .collect();
         let params = params
             .iter()
-            .map(|parameter| bindings.substitute(parameter))
-            .collect();
+            .map(|parameter| {
+                let parameter = bindings.substitute(parameter);
+                if values.is_empty() {
+                    return Ok(parameter);
+                }
+                self.resolve_dependent_ty(
+                    &parameter,
+                    &DependentValues::named(&self.param_context, &values),
+                )
+            })
+            .collect::<Result<_, _>>()?;
         Ok(Ok((params, bindings)))
     }
 

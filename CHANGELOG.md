@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An origin binder a parameter names now solves through the argument's
+  implicit view conversion together with its `mut=` binder, as upstream
+  unifies the parameter with the converted value's type (R2656).
+  `hx(bs)` over `def hx[m: Bool, //, o: Origin[mut=m]](s: Span[Byte, o])`,
+  which failed elaboration, prints `True` on a `var bs: List[Byte]` and
+  `False` from a read-only caller, at a free call, a method call, and an
+  initializer's own or struct binders alike. Two arguments converting
+  from different lists now conflict over one binder, and a view whose
+  `mut=` slot holds `False` only reads its origin in argument exclusivity
+  (`assets/ok/origin_binder_solved_through_view_conversion.mojo`).
 - A struct instance over `origin_of` of the receiver or a parameter now
   holds that argument's mutability in the `mut=` slot the origin governs,
   in the signature and at each call, as at the pin (R2517):

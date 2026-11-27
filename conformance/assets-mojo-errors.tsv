@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1366
+# swept-count	1367
 assets/type_error/address_space_unknown_leading_dot.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/address_space_unknown_name.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/atomic_bool_has_no_load.mojo	compile-reject	agree	error: no matching method in call to 'load'
@@ -48,6 +48,7 @@ assets/type_error/call_imm_origin_binder_uninferred.mojo	compile-reject	agree	er
 assets/type_error/call_mut_binder_uninferred.mojo	compile-reject	agree	error: invalid call to 'f': failed to infer parameter 'm'
 assets/type_error/call_raw_origin_binder_uninferred.mojo	compile-reject	agree	error: invalid call to 'by_r': failed to infer parameter 'origin_of(r)'
 assets/type_error/call_sibling_origin_binder_uninferred.mojo	compile-reject	agree	error: invalid call to 'f': failed to infer parameter 'origin_of(_mlir_origin)'
+assets/type_error/call_view_conversion_origins_conflict.mojo	compile-reject	agree	error: invalid call to 'both': value passed to 'b' cannot be converted from 'List[UInt8]' to 'Span[UInt8, origin_of(xs)]'
 assets/type_error/construction_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/construction_field_pointer_not_owner_origin.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/construction_struct_tail_field_not_owner_origin.mojo	compile-reject	agree	error: no matching function in initialization
