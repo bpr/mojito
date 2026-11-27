@@ -83,7 +83,7 @@ impl Checker {
             self.record_capture_accesses(span.clone(), &captures);
         }
         let return_type = self.settle_symbolic_cast_pointer(self.rebase_self_place_pointer(
-            resolved.return_type.clone(),
+            self.rebase_self_struct_result(resolved.return_type.clone(), object),
             object,
             resolved.declared_return.as_ref(),
         ));

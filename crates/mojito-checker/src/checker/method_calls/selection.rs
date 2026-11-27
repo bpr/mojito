@@ -59,12 +59,114 @@ impl Checker {
             return ty;
         };
         match reference.origin {
+            // The receiver's own storage in a bare `ref self` body is its
+            // symbolic origin at its implicit binder's mutability, upstream's
+            // one `self_is_origin`, as `origin_of(self)` reads there.
+            Origin::Place(place)
+                if place.path.is_empty()
+                    && matches!(reference.mutability, Mutability::Param(id) if id.is_reference_binder())
+                    && self.lookup_owner("self") == Some(place.root) =>
+            {
+                rebased(Origin::SelfParam, reference.mutability)
+            }
+            // A place below a bare `ref` argument keeps its binder's
+            // mutability, as the argument's own origin does.
+            place @ Origin::Place(_) if matches!(reference.mutability, Mutability::Param(id) if id.is_reference_binder()) => {
+                rebased(place, reference.mutability)
+            }
             place @ Origin::Place(_) => rebased(
                 place,
                 Mutability::of(reference.mutability == Mutability::Mutable),
             ),
             binder @ Origin::Param(_) => rebased(binder, reference.mutability),
             _ => ty,
+        }
+    }
+
+    /// Rebase a method result's struct instances over the receiver's
+    /// origin (`origin_of(self)`) onto the concrete receiver, as upstream's
+    /// call substitutes the callee's `self_is_origin` and `self_is_mut`
+    /// together: each such origin argument becomes the receiver's, an
+    /// interior projection re-applied, and the `mut=` slot it governs
+    /// takes that origin's mutability. A pointer result is
+    /// [`Self::rebase_self_place_pointer`]'s, and a receiver with no
+    /// reference passes the result through.
+    pub(super) fn rebase_self_struct_result(&self, ty: Ty, receiver: &Expr) -> Ty {
+        if ty.pointer_lit_ref().is_some() {
+            return ty;
+        }
+        let origin = match &receiver.kind {
+            ExprKind::Identifier(name)
+                if let Some((id, _)) = self.lookup_reference_parameter_binder(name) =>
+            {
+                mojito_types::origin::Origin::Param(id)
+            }
+            _ => match self.reference_actual(receiver) {
+                Ok(reference) => reference.origin,
+                Err(_) => return ty,
+            },
+        };
+        // A module binding's owner is one check's numbering, which no
+        // package declaration carries: its origin stays the callee's, and
+        // only the `mut=` slots it governs take the receiver's.
+        let module_root = matches!(
+            origin.uncast().projection_base(),
+            mojito_types::origin::Origin::Place(place) if self.owner_scope(place.root) == Some(0)
+        );
+        self.rebase_self_origins(&ty, &origin, !module_root)
+    }
+
+    /// `ty` with each struct instance's receiver-rooted origin argument
+    /// (`origin_of(self)`, projected or cast) read as `receiver` when
+    /// `rebase_origins` says so, and the
+    /// `mut=` slot that origin governs, when the receiver's convention left
+    /// it open (a bare `ref self`'s binder read), holding the rebased
+    /// origin's mutability ([`Self::origin_mutability_slot`]); an associated
+    /// application's arguments rebase as
+    /// [`crate::checker::origins::bind_self_origin_arguments`] rebases them.
+    pub(in crate::checker) fn rebase_self_origins(
+        &self,
+        ty: &Ty,
+        receiver: &mojito_types::origin::Origin,
+        rebase_origins: bool,
+    ) -> Ty {
+        use mojito_types::origin::Origin;
+        let rebased = mojito_types::types::map_struct_arguments(ty, &|name, mut arguments| {
+            let Some(info) = self.structs.get(name) else {
+                return arguments;
+            };
+            if arguments.len() != info.params.len() {
+                return arguments;
+            }
+            for (index, decl) in info.params.iter().enumerate() {
+                let (ParamDecl::Origin { origin: id, .. }, TyArg::Origin(origin)) =
+                    (decl, &arguments[index])
+                else {
+                    continue;
+                };
+                if !matches!(origin.uncast().projection_base(), Origin::SelfParam) {
+                    continue;
+                }
+                let bound = crate::checker::origins::rebase_self_origin(origin, receiver);
+                if let Some(binder) = ParamDecl::governing_mutability_binder(&info.params, *id)
+                    && let Some(slot) = info
+                        .params
+                        .iter()
+                        .position(|candidate| candidate.id() == binder.id())
+                    && matches!(arguments[slot], TyArg::Val(CtValue::Deferred(_)))
+                {
+                    arguments[slot] = TyArg::Val(self.origin_mutability_slot(binder, &bound, None));
+                }
+                if rebase_origins {
+                    arguments[index] = TyArg::Origin(bound);
+                }
+            }
+            arguments
+        });
+        if rebase_origins {
+            crate::checker::origins::bind_self_origin_arguments(&rebased, receiver)
+        } else {
+            rebased
         }
     }
 

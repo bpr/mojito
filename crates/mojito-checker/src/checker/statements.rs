@@ -4227,6 +4227,7 @@ impl Checker {
         let emitted = self.emitted_def_constraints(stmt, &ParamDecl::argument_view(&decls));
         let ret = ret_anno.as_ref();
         let (param_tys, ret_ty, compiled) = self.in_signature_scope(None, |this| {
+            this.declare_signature_arguments(None, params);
             let generated = this.generated_declaration.replace(name.contains('$'));
             let param_tys = this.param_tys(params, owner, &mut decls);
             this.generated_declaration.set(generated);

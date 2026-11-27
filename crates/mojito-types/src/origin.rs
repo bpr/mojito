@@ -76,6 +76,13 @@ impl OriginParamId {
         Self(Self::REFERENCE_BINDER_BASE + slot)
     }
 
+    /// Whether this is a bare `ref` parameter's inferred binder
+    /// ([`Self::reference_binder`]).
+    #[must_use]
+    pub const fn is_reference_binder(self) -> bool {
+        self.0 >= Self::REFERENCE_BINDER_BASE && self.0 < Self::PACK_BINDER_ID
+    }
+
     /// The implicit origin upstream gives a callable's heterogeneous
     /// collector (`*args: *Ts`), above every reference binder: the
     /// collector's `VariadicPack[origin=args, ...]` type carries it, so an
@@ -599,7 +606,11 @@ impl Origin {
                 inner.canonical_pointer_parts(mutability)
             }
             Self::Union(members) => members.iter().all(concrete_union_member).then(held),
-            Self::Place(_) => mutability.known().map(|_| held()),
+            // A place below a bare `ref` argument has the argument's
+            // implicit mutability, which each call binds.
+            Self::Place(_) => (mutability.known().is_some()
+                || matches!(mutability, Mutability::Param(binder) if binder.is_reference_binder()))
+            .then(held),
             Self::Param(_) | Self::SelfParam => Some(held()),
             Self::Projected(base, path) => {
                 let projection = path

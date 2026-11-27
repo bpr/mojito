@@ -4121,6 +4121,23 @@ impl ParamDecl {
             .filter(move |decl| decl.is_origin_mutability_binder(decls))
     }
 
+    /// The `mut=` binder among `decls` the origin binder `origin` declares
+    /// as its mutability (`m` in `o: Origin[mut=m]`).
+    pub fn governing_mutability_binder(
+        decls: &[Self],
+        origin: crate::origin::OriginParamId,
+    ) -> Option<&Self> {
+        let binder = decls.iter().find_map(|decl| match decl {
+            Self::Origin {
+                origin: id,
+                mutability: OriginMutability::Binder(binder),
+                ..
+            } if *id == origin => Some(binder),
+            _ => None,
+        })?;
+        Self::mutability_binders(decls).find(|decl| *decl.id() == binder.id)
+    }
+
     /// [`Self::argument_binders`], owned.
     pub fn argument_decls(decls: &[Self]) -> Vec<Self> {
         Self::argument_binders(decls).cloned().collect()
@@ -5698,6 +5715,45 @@ pub fn defer_mutability_reads<'a>(
             .map(|(argument, deferred)| {
                 deferred.map_or(argument, |binder| TyArg::Val(CtValue::Deferred(binder)))
             })
+            .collect()
+    })
+}
+
+/// `ty` with every `mut=` slot reading a `bound` binder holding its value.
+///
+/// The value is one no [`ParamExpr`] spells, as an argument's implicit
+/// binder read ([`crate::origin::Mutability::mut_argument`]) is.
+pub fn bind_mutability_reads<'a>(
+    ty: &Ty,
+    bound: &[(crate::param_expr::ParamId, CtValue)],
+    decls_of: &impl Fn(&str) -> Option<&'a [ParamDecl]>,
+) -> Ty {
+    if bound.is_empty() {
+        return ty.clone();
+    }
+    map_struct_arguments(ty, &|name, arguments| {
+        let Some(params) = decls_of(name) else {
+            return arguments;
+        };
+        let values: Vec<Option<CtValue>> = ParamDecl::aligned_pairs(params, &arguments)
+            .map(|(decl, argument)| match argument {
+                TyArg::Val(CtValue::Expr(read)) if decl.is_origin_mutability_binder(params) => {
+                    let read = read.as_decl_ref()?;
+                    bound
+                        .iter()
+                        .find(|(id, _)| *id == read.id)
+                        .map(|(_, value)| value.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        if values.iter().all(Option::is_none) || values.len() != arguments.len() {
+            return arguments;
+        }
+        arguments
+            .into_iter()
+            .zip(values)
+            .map(|(argument, value)| value.map_or(argument, TyArg::Val))
             .collect()
     })
 }

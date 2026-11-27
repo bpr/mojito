@@ -1169,7 +1169,10 @@ fn inferred_mut_argument(
             .then_some(Mutability::RECEIVER)
     });
     let mutability = match binder_mutability(id, origin) {
-        Some(Mutability::Param(_)) if symbolic.is_none() => Mutability::Immutable,
+        // A bare `ref` argument's place keeps its implicit binder.
+        Some(Mutability::Param(binder)) if symbolic.is_none() && !binder.is_reference_binder() => {
+            Mutability::Immutable
+        }
         Some(mutability) => mutability,
         None => symbolic.or_else(|| origin.static_mutability().map(Mutability::of))?,
     };

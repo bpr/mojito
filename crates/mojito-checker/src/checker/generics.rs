@@ -2688,11 +2688,16 @@ impl Checker {
                     // A signature annotation may name places only the body
                     // resolves (`origin_of(self.entries)`): an origin-shaped
                     // argument binds its slot unbound.
+                    // Its `mut=` is still the argument's own, which the
+                    // signature's convention gives (`origin_of(xs)` over a
+                    // `mut xs` is `True`).
                     Err(_)
                         if self.signature_origin_leniency.get()
                             && super::type_resolution::syntactic_origin_argument(argument) =>
                     {
-                        (Origin::Unbound, None)
+                        let mutability = super::type_resolution::origin_of_root(argument)
+                            .and_then(|root| self.argument_mutability(root));
+                        (Origin::Unbound, mutability)
                     }
                     Err(error) => return Err(error),
                 };

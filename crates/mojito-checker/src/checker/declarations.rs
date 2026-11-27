@@ -2390,6 +2390,14 @@ impl Checker {
         // parameters' among them ([`Self::param_tys`]).
         let mut declared = self.classify_param_list(owner, &m.type_params)?;
         let ret_ty = self.in_signature_scope(m.has_self.then_some(self_ty), |this| {
+            this.declare_signature_arguments(
+                m.has_self.then_some((
+                    m.self_convention,
+                    m.self_origin.is_some(),
+                    m.receiver_index,
+                )),
+                &m.params,
+            );
             let generated = this.generated_declaration.get();
             this.generated_declaration
                 .set(generated || m.name.contains('$'));

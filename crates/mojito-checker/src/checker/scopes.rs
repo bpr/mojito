@@ -161,14 +161,76 @@ impl Checker {
     ) -> Result<R, TypeError> {
         self.push_scope();
         self.signature_scopes += 1;
+        self.signature_argument_mutabilities
+            .borrow_mut()
+            .push(HashMap::new());
         let resolved = receiver
             .map_or(Ok(()), |ty| {
                 self.declare_signature_parameter("self", ty.clone())
             })
             .and_then(|()| resolve(self));
+        self.signature_argument_mutabilities.borrow_mut().pop();
         self.signature_scopes -= 1;
         self.pop_scope();
         resolved
+    }
+
+    /// Record, in the innermost signature scope, the mutability an origin
+    /// rooted at each argument has, as upstream's `Signatures.cpp` emits
+    /// each argument at its convention's origin
+    /// ([`signature_argument_mutabilities`]).
+    pub(super) fn declare_signature_arguments(
+        &self,
+        receiver: Option<(Option<ArgConvention>, bool, usize)>,
+        params: &[mojito_ast::ast::FnParam],
+    ) {
+        if let Some(scope) = self.signature_argument_mutabilities.borrow_mut().last_mut() {
+            scope.extend(signature_argument_mutabilities(
+                receiver,
+                params.iter().map(|param| {
+                    (
+                        param.name.as_str(),
+                        param.convention,
+                        param.origin.is_some(),
+                    )
+                }),
+            ));
+        }
+    }
+
+    /// `f` run where an origin rooted at an argument named in `arguments`
+    /// has the mutability it maps the name to, as in the signature
+    /// declaring them ([`Self::declare_signature_arguments`]): a trait
+    /// requirement's signature, read at a conformer.
+    pub(super) fn with_signature_arguments<R>(
+        &self,
+        arguments: HashMap<String, mojito_types::origin::Mutability>,
+        f: impl FnOnce() -> R,
+    ) -> R {
+        self.signature_argument_mutabilities
+            .borrow_mut()
+            .push(arguments);
+        let result = f();
+        self.signature_argument_mutabilities.borrow_mut().pop();
+        result
+    }
+
+    /// The mutability an origin rooted at the argument `name` has: in a
+    /// signature, which binds its arguments with no owner, the one its
+    /// convention gives ([`Self::declare_signature_arguments`]); in a
+    /// body, its owner's ([`Self::owner_reference_mutability`]).
+    pub(super) fn argument_mutability(
+        &self,
+        name: &str,
+    ) -> Option<mojito_types::origin::Mutability> {
+        self.signature_argument_mutabilities
+            .borrow()
+            .last()
+            .and_then(|scope| scope.get(name).copied())
+            .or_else(|| {
+                self.lookup_owner(name)
+                    .map(|owner| self.owner_reference_mutability(owner))
+            })
     }
 
     /// Whether checking is outside every body: in a module statement, a
@@ -841,5 +903,58 @@ pub(super) struct ComptimePosition(std::rc::Rc<std::cell::Cell<usize>>);
 impl Drop for ComptimePosition {
     fn drop(&mut self) {
         self.0.set(self.0.get().saturating_sub(1));
+    }
+}
+
+/// The mutability an origin rooted at each argument of a signature has, by
+/// name: the receiver's (`receiver`, its convention, whether a clause
+/// names its origin, and its slot) and each of `params` (its name,
+/// convention, and whether a clause names its origin), counted after the
+/// receiver from its slot ([`convention_mutability`]).
+pub(super) fn signature_argument_mutabilities<'a>(
+    receiver: Option<(Option<ArgConvention>, bool, usize)>,
+    params: impl IntoIterator<Item = (&'a str, Option<ArgConvention>, bool)>,
+) -> HashMap<String, mojito_types::origin::Mutability> {
+    let receiver_slot = receiver.map(|(_, _, slot)| slot);
+    let receiver = receiver.and_then(|(convention, clause, slot)| {
+        convention_mutability(convention, clause, slot).map(|mutability| ("self", mutability))
+    });
+    params
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, (name, convention, clause))| {
+            let slot = match receiver_slot {
+                Some(receiver) if index >= receiver => index + 1,
+                _ => index,
+            };
+            convention_mutability(convention, clause, slot).map(|mutability| (name, mutability))
+        })
+        .chain(receiver)
+        .map(|(name, mutability)| (name.to_string(), mutability))
+        .collect()
+}
+
+/// The mutability an origin rooted at an argument of `convention` has in
+/// its signature, at `slot` (the receiver counted): `True` for a `mut` or
+/// owned (`var`, `out`, `deinit`) argument, `False` for a read one, and a
+/// bare `ref`'s own implicit binder, which each call binds to its
+/// argument's ([`mojito_types::origin::OriginParamId::reference_binder`]).
+/// A `ref` whose clause names its origin (`clause`) leaves it to that
+/// origin.
+fn convention_mutability(
+    convention: Option<ArgConvention>,
+    clause: bool,
+    slot: usize,
+) -> Option<mojito_types::origin::Mutability> {
+    use mojito_types::origin::{Mutability, OriginParamId};
+    match convention {
+        Some(ArgConvention::Ref) if clause => None,
+        Some(ArgConvention::Ref) => u32::try_from(slot)
+            .ok()
+            .map(|slot| Mutability::Param(OriginParamId::reference_binder(slot))),
+        Some(
+            ArgConvention::Mut | ArgConvention::Var | ArgConvention::Out | ArgConvention::Deinit,
+        ) => Some(Mutability::Mutable),
+        Some(ArgConvention::Imm) | None => Some(Mutability::Immutable),
     }
 }

@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1365
+# swept-count	1366
 assets/type_error/address_space_unknown_leading_dot.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/address_space_unknown_name.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/atomic_bool_has_no_load.mojo	compile-reject	agree	error: no matching method in call to 'load'
@@ -86,6 +86,7 @@ assets/type_error/origin_mutability_binder_method_where_rejects_immutable.mojo	c
 assets/type_error/origin_mutability_binder_where_rejects_immutable.mojo	compile-reject	agree	error: invalid call to 'only_mutable': violated constraint
 assets/type_error/origin_mutability_rejects_non_bool_binder.mojo	compile-reject	agree	error: 'Origin' parameter 'mut' has 'Bool' type, but value has type 'Int'
 assets/type_error/origin_mutability_rejects_non_bool_self_member.mojo	compile-reject	agree	error: 'Origin' parameter 'mut' has 'Bool' type, but value has type 'Int'
+assets/type_error/origin_of_read_parameter_view_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'View[origin_of(xs)]' value to 'View[origin_of(xs)]'
 assets/type_error/origin_unsafe_mut_cast_conversion.mojo	compile-reject	agree	error: cannot implicitly convert 'S[o]' value to 'S[origin_of(o)]'
 assets/type_error/origin_unsafe_mut_cast_ref_result_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/origin_value_to_mlir_origin_slot.mojo	compile-reject	agree	error: value passed to '_mlir_origin' cannot be converted from 'MutOrigin' to 'LITOrigin[$0]', it depends on an unresolved parameter '$0'

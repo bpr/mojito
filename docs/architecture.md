@@ -3607,7 +3607,14 @@ to the origin: an unbound origin's, a `ref` parameter's, and `Self`'s own
 in a struct body. A call binds its callee's `mut=` binders over the whole
 declared list (`Checker::call_values`, from `declared_call_arguments`) in
 every type it substitutes, and defers a read of one the call leaves open
-(`Checker::defer_mutability_reads`), so no callee binder reaches a caller. A closure storage declares an
+(`Checker::defer_mutability_reads`), so no callee binder reaches a caller.
+An origin rooted at an argument (`origin_of(self)`, `origin_of(xs)`) has
+that argument's mutability in its signature as in its body, as upstream's
+signature emits each argument at its convention's origin: `True` for a
+`mut` or owned argument, `False` for a read one, and a bare `ref`
+argument's implicit binder (`OriginParamId::reference_binder`), whose
+`$origin_mut` read a call substitutes with the receiver or argument origin
+it binds. A closure storage declares an
 origin binder per captured reference after the enclosing binders it is
 applied to (`CheckedClosureStorage::origin_parameters`), so its instance's
 captured origins sit at their binders as any struct's do. The checker builds an instance through `ParamDecl::place_origins_with`

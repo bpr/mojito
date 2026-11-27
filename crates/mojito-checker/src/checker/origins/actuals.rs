@@ -412,7 +412,8 @@ impl Checker {
             return ty;
         };
         let mut arguments = arguments.clone();
-        for (slot, origin, _) in slots {
+        let whole = arguments.len() == info.params.len();
+        for (slot, origin, mutability) in slots {
             let Some(position) = info.origin_decls().position(|(id, _)| id == *slot) else {
                 continue;
             };
@@ -422,6 +423,27 @@ impl Checker {
                 .nth(position)
             {
                 *argument = TyArg::Origin(origin.clone());
+            }
+            // The slot's `mut=` binder takes the bound origin's mutability
+            // with it, as upstream substitutes a callee's `x_is_mut` with
+            // its `x_is_origin`: a callee's own read of its argument's
+            // mutability is no value at the call.
+            let Some(index) = ParamDecl::governing_mutability_binder(&info.params, *slot)
+                .and_then(|decl| {
+                    info.params
+                        .iter()
+                        .position(|candidate| candidate.id() == decl.id())
+                })
+                .filter(|_| whole)
+            else {
+                continue;
+            };
+            if matches!(arguments[index], TyArg::Val(CtValue::Deferred(_))) {
+                arguments[index] = TyArg::Val(self.origin_mutability_slot(
+                    &info.params[index],
+                    origin,
+                    *mutability,
+                ));
             }
         }
         TyKind::Struct(name.clone(), arguments).into()

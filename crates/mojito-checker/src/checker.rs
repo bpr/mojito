@@ -403,6 +403,11 @@ pub struct Checker {
     /// How many of `scopes` are signature scopes
     /// ([`Self::in_signature_scope`]), which no body owns.
     signature_scopes: usize,
+    /// The mutability each open signature's arguments give an origin
+    /// rooted at them ([`Self::declare_signature_arguments`]), innermost
+    /// signature last: a signature binds its arguments with no owner.
+    signature_argument_mutabilities:
+        RefCell<Vec<HashMap<String, mojito_types::origin::Mutability>>>,
     /// Binding mutability, parallel to `scopes`. `var` locals are writable;
     /// ordinary function parameters are not.
     mutable_scopes: Vec<HashMap<String, bool>>,
@@ -1114,6 +1119,7 @@ impl Checker {
         Self {
             scopes: vec![HashMap::new()],
             signature_scopes: 0,
+            signature_argument_mutabilities: RefCell::new(Vec::new()),
             mutable_scopes: vec![HashMap::new()],
             owner_scopes: vec![HashMap::new()],
             aggregate_origin_scopes: vec![HashMap::new()],

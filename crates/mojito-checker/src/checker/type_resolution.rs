@@ -2307,10 +2307,24 @@ impl Checker {
                     })
             })
             .collect();
+        // A signature's origin naming an argument's places binds its slot
+        // only per call, but its `mut=` is the argument's already.
+        let argument_mutabilities = explicit
+            .origins()
+            .iter()
+            .filter(|bound| bound.origin == mojito_types::origin::Origin::Unbound)
+            .filter_map(|bound| {
+                let mutability = bound.mutability?;
+                let decl = ParamDecl::governing_mutability_binder(params, bound.id)?;
+                let value = self.origin_mutability_slot(decl, &bound.origin, Some(mutability));
+                (!matches!(&value, CtValue::Deferred(binder) if binder.id == *decl.id()))
+                    .then(|| (decl.id().clone(), value))
+            });
         let mutabilities = explicit
             .mutabilities()
             .iter()
             .map(|bound| (bound.id.clone(), bound.value.clone()))
+            .chain(argument_mutabilities)
             .collect();
         Ok(StructBracket {
             explicit,
@@ -3306,6 +3320,7 @@ impl Checker {
         // its bound origin decides, as upstream infers it with the origin;
         // one nothing decides yet is deferred as the origin is.
         let mut open = Vec::new();
+        let mut argument_reads = Vec::new();
         for decl in ParamDecl::mutability_binders(declared) {
             let governed = declared.iter().find_map(|candidate| match candidate {
                 ParamDecl::Origin {
@@ -3318,16 +3333,28 @@ impl Checker {
             let read = governed
                 .map(|origin| self.origin_mutability_slot(decl, origin, None))
                 .and_then(|value| match value {
+                    // An argument's implicit binder read holds as itself.
+                    CtValue::Deferred(binder)
+                        if mojito_types::origin::Mutability::of_mut_argument(&binder).is_some() =>
+                    {
+                        argument_reads.push((decl.id().clone(), CtValue::Deferred(binder)));
+                        None
+                    }
                     CtValue::Deferred(_) => None,
                     CtValue::Expr(read) => Some(read),
                     value => self.param_context.constant(value).ok(),
                 });
             match read {
                 Some(read) => ids.bind(decl.id().clone(), read),
+                None if argument_reads.iter().any(|(id, _)| id == decl.id()) => {}
                 None if governed.is_some() => open.push(decl.id().clone()),
                 None => {}
             }
         }
+        let template =
+            mojito_types::types::bind_mutability_reads(&template, &argument_reads, &|name| {
+                self.structs.get(name).map(|info| info.params.as_slice())
+            });
         let template = self.defer_mutability_reads(&template, &open);
         let bindings = AssocBindings {
             types,
@@ -5619,6 +5646,25 @@ pub(super) fn immutable_slot_origin(
         return (origin, mutability);
     }
     (Origin::immutable(origin), Some(Mutability::Immutable))
+}
+
+/// The argument an `origin_of(...)` application argument roots its places
+/// at (`xs` in `origin_of(xs.items)`), `None` for any other argument.
+pub(super) fn origin_of_root(argument: &mojito_ast::ast::ParamArg) -> Option<&str> {
+    let mut value = argument;
+    while let mojito_ast::ast::ParamArg::Named { value: inner, .. } = value {
+        value = inner;
+    }
+    let mojito_ast::ast::ParamArg::Value(expression) = value else {
+        return None;
+    };
+    match &expression.kind {
+        ExprKind::Call { name, args, .. } if name == "origin_of" => match args.as_slice() {
+            [place] => super::overload_support::place_root_name(place),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// Whether an application argument is syntactically origin-shaped — an

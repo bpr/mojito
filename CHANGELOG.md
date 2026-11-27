@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct instance over `origin_of` of the receiver or a parameter now
+  holds that argument's mutability in the `mut=` slot the origin governs,
+  in the signature and at each call, as at the pin (R2517):
+  `View[origin_of(xs)]` is `View[True, …]` over a `mut xs` and
+  `View[False, …]` over a read one, and `xs.__iter__()` over a `var xs` is
+  a `_ListIter[True, …, origin_of(xs)]`. Methods reading the slot on such
+  a result, which failed elaboration, now run, and so does a `for` over a
+  `List` slice (`assets/ok/origin_of_argument_mut_slot.mojo`).
 - A subscript now binds its accessor's compile-time parameters from the
   arguments the checker solved for the call, as a method call does
   (R2449). `s[5]`, `s[1:3]`, and `s[2] = 3` over accessors deducing

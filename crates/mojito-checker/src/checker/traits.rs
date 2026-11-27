@@ -648,6 +648,7 @@ impl Checker {
         self.enclosing_type_params.extend(m.type_params.clone());
         self.enclosing_param_decls.extend(declared.iter().cloned());
         let signature = self.in_signature_scope(Some(&Ty::self_type()), |this| {
+            this.declare_signature_arguments(Some((m.self_convention, m.self_origin.is_some(), 0)), &m.params);
             if let Some(annotation) = &m.self_type {
                 let ty = this.ty_from_anno(annotation)?;
                 if ty != Ty::self_type() {
@@ -1806,6 +1807,14 @@ impl Checker {
                 self.push_assumptions(self.method_where_assumptions(m, &availability));
                 let receiver = self.signature_receiver(m)?;
                 let signature = self.in_signature_scope(receiver.as_ref(), |this| {
+                    this.declare_signature_arguments(
+                        m.has_self.then_some((
+                            m.self_convention,
+                            m.self_origin.is_some(),
+                            m.receiver_index,
+                        )),
+                        &m.params,
+                    );
                     let mut method_decls = method_decls;
                     let all_types = this.param_tys(&m.params, owner, &mut method_decls)?;
                     let sig = this.method_sig(m, method_decls, &all_types, availability)?;
@@ -1845,6 +1854,14 @@ impl Checker {
                 self.push_assumptions(facts);
                 let receiver = self.signature_receiver(m)?;
                 let signature = self.in_signature_scope(receiver.as_ref(), |this| {
+                    this.declare_signature_arguments(
+                        m.has_self.then_some((
+                            m.self_convention,
+                            m.self_origin.is_some(),
+                            m.receiver_index,
+                        )),
+                        &m.params,
+                    );
                     let mut method_decls = method_decls;
                     let all_types = this.param_tys(&m.params, owner, &mut method_decls)?;
                     let mut clauses = free;
@@ -2428,7 +2445,11 @@ impl Checker {
             positional_only: req_sig.positional_only,
             keyword_only: req_sig.keyword_only,
             conventions: req_sig.conventions.clone(),
-            ret: self.requirement_ty_at(&req_sig.ret, self_ty),
+            // The requirement's result reads its own receiver's
+            // mutability, as a conformer's signature does.
+            ret: self.with_signature_arguments(requirement_receiver(req_sig), || {
+                self.requirement_ty_at(&req_sig.ret, self_ty)
+            }),
             raises: req_sig.raises,
             error: req_sig
                 .error
@@ -5166,4 +5187,18 @@ fn unconverted_struct_default(decl: &ParamDecl) -> bool {
         && default.meta().as_value().is_some_and(|found| {
             mojito_types::types::erase_origins(found) != mojito_types::types::erase_origins(ty)
         })
+}
+
+/// The mutability an origin rooted at the receiver of the requirement
+/// `req_sig` has in its signature ([`super::scopes::signature_argument_mutabilities`]).
+fn requirement_receiver(req_sig: &MethodSig) -> HashMap<String, mojito_types::origin::Mutability> {
+    use mojito_types::origin::SigOrigin;
+    let clause = req_sig
+        .self_ref
+        .as_ref()
+        .is_some_and(|reference| !matches!(reference.origin, SigOrigin::Infer | SigOrigin::Self_));
+    super::scopes::signature_argument_mutabilities(
+        Some((req_sig.self_convention, clause, 0)),
+        std::iter::empty(),
+    )
 }

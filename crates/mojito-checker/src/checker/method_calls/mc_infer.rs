@@ -263,7 +263,7 @@ impl Checker {
                 self.bind_call_result_origins(
                     span,
                     self.rebase_self_place_pointer(
-                        resolved.return_type,
+                        self.rebase_self_struct_result(resolved.return_type, object),
                         object,
                         resolved.declared_return.as_ref(),
                     ),

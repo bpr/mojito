@@ -981,7 +981,18 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `in_signature_scope` is a signature's value scope: the receiver and each
   parameter (`param_tys`, `statements.rs`) are declared, without storage,
   as their annotations resolve, so a later annotation or the result reads
-  them (`y: type_of(x)`); `outside_bodies` discounts it. It also owns
+  them (`y: type_of(x)`); `outside_bodies` discounts it. Each signature
+  records the mutability its arguments' conventions give an origin rooted
+  at them (`declare_signature_arguments`, over
+  `signature_argument_mutabilities`), which `argument_mutability` reads in
+  a signature and a body's owner gives otherwise; a trait requirement's
+  result reads its receiver's through `with_signature_arguments`
+  (`traits.rs` `requirement_at`). A method call rebases a struct result's
+  `origin_of(self)` instances and the `mut=` slots they govern onto the
+  receiver (`method_calls/selection.rs`
+  `Checker::rebase_self_struct_result`, `Checker::rebase_self_origins`),
+  and a view-returning call's recorded origins fill their governed `mut=`
+  slots (`origins/actuals.rs` `bind_call_result_origins`). It also owns
   binding-identity allocation: `reserve_owners` hands out
   identities from the cursor, or from the fresh region above every range a
   previous pass recorded once a body inferred again would cross the ceiling

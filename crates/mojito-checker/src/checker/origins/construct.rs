@@ -312,10 +312,10 @@ impl ConstructorOriginBindings {
     ) -> Option<Mutability> {
         if let Some((origin, mutability)) = self.pointer_binding(id) {
             return mutability.known().map(Mutability::of).or_else(|| {
-                matches!(
+                (matches!(
                     origin.projection_base(),
                     Origin::Param(_) | Origin::SelfParam
-                )
+                ) || matches!(mutability, Mutability::Param(binder) if binder.is_reference_binder()))
                 .then_some(mutability)
             });
         }
@@ -514,6 +514,12 @@ impl Checker {
                 if let Some(read) = self.origin_mutability_binder_read(id) =>
             {
                 CtValue::Expr(read)
+            }
+            // A bare `ref` argument's implicit binder, which no `mut=`
+            // binder in scope names, holds as its own read, as upstream's
+            // instance holds the argument's `self_is_mut`.
+            Some(Mutability::Param(id)) if id.is_reference_binder() => {
+                Mutability::Param(id).mut_argument()
             }
             Some(Mutability::Param(_)) | None => origin.symbolic_cast_mutability().map_or_else(
                 || CtValue::Deferred(decl.binder()),
@@ -1158,9 +1164,7 @@ impl Checker {
             Origin::Projected(base, _) => self.decided_origin_mutability(base),
             Origin::Param(_) => self.bound_origin_mutability(origin),
             // The receiver's origin has the receiver's capability.
-            Origin::SelfParam => self
-                .lookup_owner("self")
-                .map(|owner| self.owner_reference_mutability(owner)),
+            Origin::SelfParam => self.argument_mutability("self"),
             _ => origin_mutability(origin, &|owner| self.owner_reference_mutability(owner)),
         }
     }

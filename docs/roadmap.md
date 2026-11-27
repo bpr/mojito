@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2653**.
+Next free ID: **R2656**.
 
 ## Ordered Work
 
@@ -11799,82 +11799,78 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2650, R2651, R2517, R1300, R2652, R2515.
   - Model: Fable, Planned.
 
-- [ ] **R2517 A struct instance over `origin_of` of the receiver or a
-  parameter keeps a deferred `mut=` slot**
+- [ ] **R2653 A free call's associated result over a parameter's origin
+  binds neither that origin nor its `mut=` at the call**
 
-  `reflect[type_of(xs.__iter__())].name()` over `var xs = [1, 2]` prints
-  `_ArrayIter[iterable_mut, …]`, where the pin prints `True` in that slot.
-  - `resolve_parameterized_member` (`type_resolution.rs`) binds a
-    member's `iterable_origin` from `origin_of(self)` and leaves its
-    `iterable_mut`, the binder that origin declares.
-  - `Origin::SelfParam`'s mutability is `Mutability::RECEIVER`
-    (`OriginParamId(0)`, `origin.rs`), the id a struct's first declared
-    origin binder also takes, at `bound_origin_mutability`
-    (`generics.rs`), `pointer_origin_arg` (`type_resolution.rs`),
-    `inferred_mut_argument` (`subst.rs`), and two canonicalizations in
-    `types.rs`.
-  - Lever: those sites read the receiver's or parameter's own
-    mutability, and an instance's `mut=` binder takes
-    `origin_mutability_slot` of its supplied origin, as
-    `declared_call_arguments` fills one.
-    - For `mut` and read conventions, the convention gives it.
-    - For a bare `ref` it is the handle's binder: today the synthetic
-      `OriginParamId::reference_binder`, and R2516's declared `x_is_mut`
-      once that lands. So this fix does not wait on R2516.
-  - Probe: `reflect[type_of(d.keys())].name()` over a `var d` prints
-    `_DictKeyIter[iterable_mut, …]`, where the pin prints `True`.
-  - Probe: `var it: List[Int].IteratorType[origin_of(xs)] =
-    xs.__iter__()` over `var xs: List[Int]` fails with "cannot implicitly
-    convert '_ListIter[iterable_mut, SIMD[DType.int, 1],
-    origin_of(self)]'", where the pin binds it.
-  - Probe: the same annotation over `iter(xs)` finds
-    `_ListIter[iterable_mut, SIMD[DType.int, 1], _]`.
-  - Probe: `_ArrayIter.__moveinit__`'s `iterable_mut` in
-    `assets/ok/std_iter_map.mojo`'s `main` records the callee's own
-    binder. The move restates `_MapIterator`'s nested
-    `_ArrayIter[iterable_mut, Int, 3, origin_param(0)]`, whose origin is
-    `Array.__iter__`'s `origin_of(self)`, never rebased onto `main`.
-  - Probe: `StringSpan.__init__$ov$String`'s `mut` in `main` for `keys +=
-    key` over `for key in d.keys()`
-    (`assets/ok/generic_struct_instance_dispatch.mojo`) records the
-    callee's binder over the unrebased `Projected(Param(4),
-    [Interior("element")])`. A caller that declares a binder at the
-    leaked index would read that binder's `$origin_mut` instead, so the
-    fix is the rebasing, not a check at the call.
-  - A construction's call record already reads the caller's
-    `$origin_mut` for these slots (R2633), but its checked type keeps the
-    own deferred `mut=` (`_ListIter[iterable_mut, T, origin_of(self)]`),
-    so record and type disagree until this lands.
-  - Probe: `reflect[type_of(viewl(xs))].name()` over `def viewl(mut xs:
-    List[Int]) -> View[origin_of(xs)]` and `struct View[view_mut: Bool, //,
-    view_origin: Origin[mut=view_mut]]` prints `View[view_mut, {}]`, where
-    the pin prints `View[True, …]` (`View[False, …]` for a read `xs`). A
-    `View` method reading `Self.view_mut` on the result fails elaboration:
-    "parameter `view_mut` is read, but an instance that removed it erased
-    its struct argument (`_REMOVED_ARG`)". `var w: View[origin_of(xs)]` over
-    a local binds `True`.
-  - Probe: `b.view().first()` over `def view(mut self) ->
-    View[origin_of(self.items)]` (or `ref self`, or a declared `ref[o]
-    self`), where `View.first` returns `get(self.src[])` through its
-    `Pointer[List[Int], Self.view_origin]` field over `def get[m: Bool, //,
-    o: Origin[mut=m]](ref[o] xs: List[Int])` printing `m`. It fails
-    elaboration ("in `get`: unsupported monomorphization cannot resolve
-    parameter `m`"), where the pin prints `True` and the element.
-  - Probe: `assets/ok/list_contiguous_slice_view.mojo` (`for x in xs[:2]`
-    over a `var xs: List[Int]`) fails post-elaboration verification
-    ("binding of Span$mono$Vfalse$TInt[false, Int] to a slot of type
-    Span$mono$Vtrue$TInt[true, Int]"). `List.__getitem__(ref self, slice:
-    ContiguousSlice)` builds its `Span` over `origin_of(self)` from
-    `self.unsafe_ptr()`, whose `mut` reads `False`.
-    - A prototype of R2516 did not fix it, and neither did pointing
-      `bound_origin_mutability` and `pointer_origin_arg` at the declared
-      receiver binder, so start from the `Span` construction's `mut` slot
-      in `List.__getitem__`.
-  - R2516 routes every bare `ref` through these instances: a prototype
-    of it failed 40 of a 387-fixture `assets/ok` sample here, every `for`
-    over an `Array` or `List` among them (`_ListIter.__next__`'s
-    `iterable_mut`, `_REMOVED_ARG`).
-  - Found while landing R2375 (2026-11-21).
+  `var it: List[Int].IteratorType[origin_of(xs)] = iter(xs)` over `var xs:
+  List[Int]` fails with "cannot implicitly convert '_ListIter[iterable_mut,
+  SIMD[DType.int, 1], _]'", where the pin binds it and iterates `1 2`.
+  - `iter`'s result is `IterableType.IteratorType[origin_of(iterable)]`.
+    `lower_assoc_application_arg` (`type_resolution.rs`) lowers
+    `origin_of(iterable)` to `Origin::Unbound` in the signature, and the
+    `Assoc` carries no slot for the member's infer-only `iterable_mut`.
+  - `view_return_origins` (`origins/sig.rs`) records a `ViewReturnOrigin`
+    contract only for a struct-named bracket application, so
+    `record_free_call_result_origins` binds nothing for an associated
+    result, and `bound_callee_result` (`call_inference.rs`) leaves the
+    origin `_`.
+  - Lever: carry the member's whole list, as upstream's
+    `IteratorType[iterable_is_mut, iterable_is_origin]` does: supply the
+    `mut=` beside the origin when lowering the application
+    (`member_application`), from `argument_mutability` of the origin's
+    root, and record the contract for an associated result so the call
+    substitutes both, as `bind_call_result_origins` does for a struct.
+  - Probe: `map[inc](l)` over `var l = [1, 2, 3]`
+    (`assets/ok/std_iter_map.mojo`) types `main`'s locals as
+    `_MapIterator[Int, _ArrayIter[iterable_mut, Int, 3, origin_param(0)]]`
+    (`emit-mir`): the nested iterator keeps the callee's own binder and
+    origin.
+  - Found while landing R2517 (2026-11-27).
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R2655 A `for` loop's element reference keeps its iterator's own
+  origin binder instead of the iterator instance's origin**
+
+  `for key in d.keys()` over a `var d: Dict[String, Int]`
+  (`assets/ok/generic_struct_instance_dispatch.mojo`) records `keys +=
+  key`'s `StringSpan.__init__$ov$String` call in `main` over
+  `Projected(Param(4), [Interior("element")])` with `StringSpan`'s own
+  `mut` binder (`emit-mir`), where upstream's element reference carries
+  the `_DictKeyIter[True, …, origin_of(d)]` instance's origin.
+  - `__next__`'s `ref[Self.iterable_origin]` result names the iterator
+    struct's origin binder. The loop binds the element at that origin
+    without substituting the iterator instance's origin argument, as a
+    method call on the instance substitutes `Self`'s binders.
+  - A caller declaring its own origin binder at the leaked index would
+    read that binder's `$origin_mut`, so the fix is the substitution, not
+    a check at the call.
+  - Found while landing R2517 (2026-11-27).
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R2654 `Mutability::RECEIVER` stands for the receiver's mutability
+  as `OriginParamId(0)`, the id a struct's first origin binder also takes**
+
+  A pointer over `origin_of(self)` whose `mut` no producer filled reads
+  `Param(OriginParamId(0))`, which a struct declaring an origin binder at
+  index 0 reads as its own binder's `mut`.
+  - The readers: `bound_origin_mutability` (`generics.rs`),
+    `pointer_origin_arg` (`type_resolution.rs`, two arms),
+    `inferred_mut_argument` (`origins/subst.rs`), and
+    `settle_symbolic_cast_pointers` and `canonical_pointer_application`
+    (`mojito-types/src/types.rs`).
+  - Lever: the checker readers read `argument_mutability("self")`
+    (`scopes.rs`), the receiver's convention in a signature and its
+    owner's in a body, as R2517 made `decided_origin_mutability` read it.
+    The two `mojito-types` canonicalizations then drop the fallback,
+    since every producer fills the pointer's `mut`, and the constant
+    goes.
+  - `inferred_mut_argument` still collapses a place's `Param` mutability
+    to `Immutable` when the origin names no binder and the mutability is
+    no bare `ref` argument's (a declared `ref[o]` argument's place).
+    Check it against the same rule.
+  - Found while landing R2517 (2026-11-27).
   - Depends on nothing.
   - Model: Opus, Planned.
 
