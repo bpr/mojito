@@ -3239,6 +3239,54 @@ fn conversions_and_converted_defaults_record_the_constructed_instance() {
 }
 
 #[test]
+fn receiver_and_origin_rooted_mut_slots_record_the_callers_read() {
+    // A `ref self` method's construction over its receiver's origin records
+    // the caller's implicit receiver mutability (`$origin_mut` of the
+    // receiver's reference binder), as upstream's call reads the caller's
+    // `self_is_mut`; a `mut self` or read `self` receiver closes the slot.
+    let source = "struct View[view_mut: Bool, //, view_origin: Origin[mut=view_mut]]:\n    var src: Pointer[List[Int], Self.view_origin]\n\n    def __init__(out self, ref[Self.view_origin] xs: List[Int]):\n        self.src = Pointer(to=xs)\n\n    def first(self) -> Int:\n        return self.src[][0]\n\n\nstruct Box:\n    var items: List[Int]\n\n    def __init__(out self):\n        self.items = [7, 8]\n\n    def view(ref self) -> View[origin_of(self.items)]:\n        return View(self.items)\n\n    def view_mut(mut self) -> View[origin_of(self.items)]:\n        return View(self.items)\n\n    def view_read(self) -> View[origin_of(self.items)]:\n        return View(self.items)\n\n\ndef main():\n    var b = Box()\n    print(b.view().first(), b.view_mut().first(), b.view_read().first())\n";
+    let compiler = Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile receiver-rooted views");
+    use mojito::ct::CtValue;
+    use mojito::origin::{Mutability, OriginParamId};
+    use mojito::types::TyArg;
+    let mut_slot = |method: &str| {
+        let function = &compiled
+            .mir()
+            .functions
+            .iter()
+            .find(|(name, _)| name == method)
+            .unwrap_or_else(|| panic!("{method} lowered"))
+            .1;
+        function
+            .body
+            .instrs
+            .iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::Call {
+                    func,
+                    instantiated_args,
+                    ..
+                } if func.0 == "View.__init__" => instantiated_args.first().cloned(),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{method} constructs a View"))
+    };
+    match mut_slot("Box.view") {
+        TyArg::Val(CtValue::Deferred(binder)) => assert_eq!(
+            Mutability::of_mut_argument(&binder),
+            Some(Mutability::Param(OriginParamId::reference_binder(0)))
+        ),
+        other => panic!("ref self records {other:?}"),
+    }
+    assert_eq!(mut_slot("Box.view_mut"), TyArg::Val(CtValue::Bool(true)));
+    assert_eq!(mut_slot("Box.view_read"), TyArg::Val(CtValue::Bool(false)));
+    assert_eq!(compiler.execute(&compiled).unwrap().output, "7 7 7\n");
+}
+
+#[test]
 fn inferred_generic_method_calls_retain_parameter_declarations() {
     let source = "@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def size[T: Copyable & Movable & Deinitable](self, var **options: T) -> Int:\n        return self.bias + len(options)\n\ndef main():\n    var counter = Counter(10)\n    print(counter.size(left=1, right=2))\n";
     let compiler = Compiler::default().with_snippet_module_scope();

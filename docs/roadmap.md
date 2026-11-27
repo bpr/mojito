@@ -62,41 +62,6 @@ R2625–R2640 stage that, in
 [`docs/call-application-plan.md`](call-application-plan.md), one entry per
 slice.
 
-- [ ] **R2633 A call's `mut=` slot governed by a receiver-, `ref`-parameter-,
-  or bare-`Origin`-rooted origin records the callee's own binder**
-
-  The slot holds `ct_deferred` of the callee's binder, which no caller
-  binds, where upstream's call reads the caller's implicit `self_is_mut`.
-  - Cause: `declared_call_arguments` (`checker/origins/construct.rs`) fills
-    the slot from `origin_mutability_slot`, which falls to the callee's
-    binder when the governing origin is `origin_of(self)`, a `ref`
-    parameter's, or a bare `o: Origin`'s. None declares a `mut=` binder.
-  - Lever: write the caller-open read `Mutability::Param(id).mut_argument()`
-    in that `mut=` arm only. `origin_mutability_slot` also spells types,
-    so it stays.
-  - A copy or move MIR synthesizes takes an instance's own deferred `mut=`
-    (R2517's slot) through `ParamDecl::constructor_call_arguments`
-    (`type_construction.rs`'s `struct_arguments`). Close it the same way,
-    with a `types.rs` helper beside `static_mutability_slot`.
-  - Risk: `Mutability::RECEIVER` is `OriginParamId(0)`, the id a struct's
-    first origin binder also takes, so a `$origin_mut:0` read is ambiguous
-    in a method of such a struct. Note it under R2628.
-  - Probe: `iterable_mut` of every std iterator a `ref self` method builds
-    (`_ListIter`, `_ListReversedIter`, `_ArrayIter`, `_SetIter`,
-    `_OptionalIter`, `_DictKeyIter`, `_DictValueIter`, `_DictEntryIter`).
-  - Probe: `StringSpan(self)` in `String.__iter__` and both
-    `String.__getitem__` slice overloads, and `Pointer[origin=
-    origin_of(self)](_mlir_value=…)` in `StaticTuple._unsafe_ref`.
-  - Probe: `assets/ok/{pointer_field_view_method_return,
-    template_method_receiver_pointer,origin_argument_direct_applications,
-    loan_beside_owner_access,construction_union_origin_mut_write}.mojo`.
-  - Probe: `_ArrayIter.__moveinit__`'s `iterable_mut` in
-    `assets/ok/std_iter_map.mojo`.
-  - Each probe is a line of the placeholder probe in
-    `docs/call-application-plan.md` §B1e.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R2634 A method's own origin binder that only its `ref[o] self`
   receiver binds records `_` in the call's application**
 
@@ -204,8 +169,10 @@ slice.
   - Docs: `verify_application` in `docs/architecture.md`, the
     `ct_deferred` meanings in `docs/mir-text-format.md`, and B1e.
   - Slice B1e of `docs/call-application-plan.md`.
-  - Depends on R2633, R2634, R2635, R2636, R2637, R2638, and R2376
-    (`freeze(other: S)` declares no binder to name its argument's origin).
+  - Depends on R2633, R2634, R2635, R2636, R2637, R2638, R2517 (a
+    synthesized move's register type keeps its member's own deferred
+    `mut=`), and R2376 (`freeze(other: S)` declares no binder to name its
+    argument's origin).
   - Model: Opus, Not Planned.
 
 - [ ] **R2640 A call's type argument nests a placeholder**
@@ -253,6 +220,14 @@ slice.
     (`infer_receiver_call`), `inline_parametric`'s
     `subscript_parameter_arguments`, and `call_defaults.rs`'s subscript
     sites, which pass `bindings_of` no application.
+  - A `mut=` slot over a receiver's or bare `ref` parameter's origin
+    records `$origin_mut` of `OriginParamId::reference_binder(slot)`, an id
+    no declared list holds. Until R2516 declares `self_is_mut`, the
+    substitution binds it from the call's receiver or argument mutability,
+    as `inline_parametric`'s `argument_mutabilities` already does.
+    `Mutability::RECEIVER` (`OriginParamId(0)`) shares its id with a
+    struct's first origin binder, a latent hazard of the same
+    substitution; no recorded slot holds it today.
   - Depends on R2631, R2632, R2639, and R2640 (every call must carry a
     complete record).
   - Model: Fable, Planned.
@@ -11297,6 +11272,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `pointer_origin_arg` has no such path.
   - Probe: the union form `-> Pointer[Int, origin_of(a, b)]` fails the
     same way.
+  - Probe: the lenient struct spelling runs to a wrong value. Over
+    `struct Cursor[mut: Bool, //, o: Origin[mut=mut]]` holding a `Pointer[Int,
+    Self.o]`, `def r(ref x: Int) -> Cursor[origin_of(x)]: return
+    Cursor(Pointer(to=x))` prints `0` for `print(r(y).p[])` over `var y =
+    6`, where the pin prints `6`. The caller's result type keeps `r`'s
+    parameter place (`origin_place { root: <r's x> }`), never rebased onto
+    `y`, so the caller drops `y` before the read.
   - Found while landing R2429 (2026-11-21).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -11650,6 +11632,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     prints `True True False False`.
   - Probe: the same over `def a(ref[_] x: Int)`, whose handle is even
     `Immutable` today.
+  - Probe: `Cursor(Pointer(to=self.x))` in a `ref self` method, and
+    `Cursor(Pointer(to=x))` in `def r(ref x: Int)`, over `struct
+    Cursor[mut: Bool, //, o: Origin[mut=mut]]`, record `ct_bool(false)`
+    in the call's `mut` slot: the pointer's wrongly immutable `mut`
+    decides it, where the pin's call reads `x_is_mut`.
   - Probe: `var f = r` for that `r` is accepted, where the pin rejects it
     with "parameter 'x_is_mut' … is not bound".
   - Probe: `assets/ok/list_contiguous_slice_view.mojo` (`for x in xs[:2]`
@@ -11718,6 +11705,22 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     origin_of(self)]'", where the pin binds it.
   - Probe: the same annotation over `iter(xs)` finds
     `_ListIter[iterable_mut, SIMD[DType.int, 1], _]`.
+  - Probe: `_ArrayIter.__moveinit__`'s `iterable_mut` in
+    `assets/ok/std_iter_map.mojo`'s `main` records the callee's own
+    binder. The move restates `_MapIterator`'s nested
+    `_ArrayIter[iterable_mut, Int, 3, origin_param(0)]`, whose origin is
+    `Array.__iter__`'s `origin_of(self)`, never rebased onto `main`.
+  - Probe: `StringSpan.__init__$ov$String`'s `mut` in `main` for `keys +=
+    key` over `for key in d.keys()`
+    (`assets/ok/generic_struct_instance_dispatch.mojo`) records the
+    callee's binder over the unrebased `Projected(Param(4),
+    [Interior("element")])`. A caller that declares a binder at the
+    leaked index would read that binder's `$origin_mut` instead, so the
+    fix is the rebasing, not a check at the call.
+  - A construction's call record already reads the caller's
+    `$origin_mut` for these slots (R2633), but its checked type keeps the
+    own deferred `mut=` (`_ListIter[iterable_mut, T, origin_of(self)]`),
+    so record and type disagree until this lands.
   - Found while landing R2375 (2026-11-21).
   - Depends on R2516.
   - Model: Opus, Planned.

@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call's `mut=` slot governed by a `ref` receiver's, a bare `ref`
+  parameter's, or a bare `o: Origin`'s origin now records the caller's
+  implicit binder's `$origin_mut` read, as upstream's call reads the
+  caller's `self_is_mut`, instead of the callee's own binder, which no
+  caller binds (R2633). Every std iterator a `ref self` method builds and
+  `StringSpan(self)` in `String`'s `ref self` methods are among them. The
+  instance types keep the callee's deferred binder until R2517.
+
 - An implicit conversion's call now applies the instance its constructor
   builds, as an explicit construction does, instead of the expected
   parameter type's unbound `StringSpan[mut, _]`: a literal converts at

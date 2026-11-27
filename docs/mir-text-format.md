@@ -1643,7 +1643,11 @@ parameter its callee declares, as upstream's call op holds one attribute per
 declared parameter: each origin binder's solved origin (`origin_arg`) and
 each `mut=` binder's mutability (`ct_bool`, or `ct_deferred` where the
 caller's binders decide it) in place beside the type and value binders'
-solutions, a construction's struct prefix included. The verifier rejects a
+solutions, a construction's struct prefix included. A `ct_deferred` whose
+binder's owner is `$origin_mut` is a read of an implicit binder of the
+caller (its receiver's or a bare `ref` parameter's reference binder, or a
+bare `o: Origin`'s own), which the caller's instance closes, as upstream's
+call reads the caller's implicit `self_is_mut`. The verifier rejects a
 call whose solved arguments bind any other list. A call in an older
 artifact, whose solved arguments bind the argument view, is widened at load,
 each origin binder's slot `origin_unbound` and each `mut=` binder's

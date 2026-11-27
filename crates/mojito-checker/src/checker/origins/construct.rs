@@ -353,9 +353,13 @@ impl Checker {
     /// (`bracket`) or else the one the arguments' places bound it to
     /// (`bindings`), and each `mut=` binder's value, that origin's
     /// mutability. A mutability the caller's own `mut=` binder decides is
-    /// a read of that binder, which the caller's instance closes, and one
-    /// no binder in scope names is [`CtValue::Deferred`]. `arguments` is
-    /// returned as it stands when it is no
+    /// a read of that binder, which the caller's instance closes. One an
+    /// implicit binder of the caller decides (its receiver's or a bare
+    /// `ref` parameter's reference binder, or a bare `o: Origin`'s own),
+    /// where upstream's call reads the caller's implicit `self_is_mut`,
+    /// is that binder's `$origin_mut` read ([`Mutability::mut_argument`]),
+    /// and only an undecided one is [`CtValue::Deferred`] of the callee's
+    /// binder. `arguments` is returned as it stands when it is no
     /// solution of the argument view.
     pub(in crate::checker) fn declared_call_arguments(
         &self,
@@ -397,8 +401,8 @@ impl Checker {
                     TyArg::Val(governed.map_or_else(
                         || CtValue::Deferred(decl.binder()),
                         |id| match bracket.get(&id) {
-                            Some(origin) => self.origin_mutability_slot(decl, origin, None),
-                            None => self.origin_mutability_slot(
+                            Some(origin) => self.call_mutability_slot(decl, origin, None),
+                            None => self.call_mutability_slot(
                                 decl,
                                 &origin(id).unwrap_or(Origin::Unbound),
                                 bound(id),
@@ -431,11 +435,7 @@ impl Checker {
         origin: &Origin,
         bound: Option<Mutability>,
     ) -> CtValue {
-        let decided = origin.static_mutability().map(Mutability::of);
-        match decided
-            .or(bound)
-            .or_else(|| self.decided_origin_mutability(origin))
-        {
+        match self.decided_slot_mutability(origin, bound) {
             Some(Mutability::Mutable) => CtValue::Bool(true),
             Some(Mutability::Immutable) => CtValue::Bool(false),
             Some(Mutability::Param(id))
@@ -1177,6 +1177,47 @@ impl Checker {
                     .ok()
                     .map(|reference| (reference.origin, Some(reference.mutability)))
             })
+    }
+
+    /// The mutability [`Self::origin_mutability_slot`] decides for an
+    /// origin `origin`: the origin's own when it alone decides it (a
+    /// cast's, a static origin's), else `bound`, else the origin's own
+    /// through its owner or enclosing binder.
+    fn decided_slot_mutability(
+        &self,
+        origin: &Origin,
+        bound: Option<Mutability>,
+    ) -> Option<Mutability> {
+        origin
+            .static_mutability()
+            .map(Mutability::of)
+            .or(bound)
+            .or_else(|| self.decided_origin_mutability(origin))
+    }
+
+    /// The value a call records in its callee's `mut=` binder `decl`
+    /// governing `origin`: [`Self::origin_mutability_slot`]'s, except that
+    /// a mutability an implicit binder of the caller decides with no
+    /// `mut=` binder in scope is that binder's `$origin_mut` read
+    /// ([`Mutability::mut_argument`]), as upstream's call reads the
+    /// caller's implicit `self_is_mut`, rather than the callee's own
+    /// binder, which no caller binds. A type keeps the callee's binder, so
+    /// it still compares equal to the declared type it instantiates.
+    fn call_mutability_slot(
+        &self,
+        decl: &ParamDecl,
+        origin: &Origin,
+        bound: Option<Mutability>,
+    ) -> CtValue {
+        match self.origin_mutability_slot(decl, origin, bound) {
+            CtValue::Deferred(_)
+                if let Some(Mutability::Param(id)) =
+                    self.decided_slot_mutability(origin, bound) =>
+            {
+                Mutability::Param(id).mut_argument()
+            }
+            value => value,
+        }
     }
 
     /// Bind the struct binders one declared parameter or field type names
