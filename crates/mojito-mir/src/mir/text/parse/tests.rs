@@ -3312,6 +3312,7 @@ fn older_struct_instances_gain_their_mutability_arguments() {
         mutability: mojito_types::types::OriginMutability::Binder(mutability.binder()),
         infer_only: false,
         lit: false,
+        mlir_origin: None,
     };
     let structure = MirStructDeclaration {
         name: owner.into(),
@@ -3366,7 +3367,9 @@ fn older_struct_instances_gain_their_mutability_arguments() {
 
 /// Schema 1.186 declares an origin binder in place, with the mutability
 /// its `mut=` names: a sibling `Bool` binder, a fixed value, or an
-/// `OriginSet`; a binder holding the raw `!lit.origin` records `lit`.
+/// `OriginSet`; a binder holding the raw `!lit.origin` records `lit`, and
+/// schema 1.239's binder whose `_mlir_origin=` names it records
+/// `mlir_origin`.
 #[test]
 fn origin_binders_round_trip() {
     let owner = "$test:f";
@@ -3384,6 +3387,7 @@ fn origin_binders_round_trip() {
             ),
             infer_only: false,
             lit: false,
+            mlir_origin: None,
         },
         ParamDecl::Origin {
             id: ParamId::new(owner, 2),
@@ -3392,6 +3396,7 @@ fn origin_binders_round_trip() {
             mutability: mojito_types::types::OriginMutability::Fixed(true),
             infer_only: false,
             lit: false,
+            mlir_origin: None,
         },
         ParamDecl::Origin {
             id: ParamId::new(owner, 3),
@@ -3400,6 +3405,7 @@ fn origin_binders_round_trip() {
             mutability: mojito_types::types::OriginMutability::Set,
             infer_only: false,
             lit: false,
+            mlir_origin: None,
         },
         ParamDecl::Origin {
             id: ParamId::new(owner, 4),
@@ -3413,6 +3419,21 @@ fn origin_binders_round_trip() {
             ),
             infer_only: true,
             lit: true,
+            mlir_origin: None,
+        },
+        ParamDecl::Origin {
+            id: ParamId::new(owner, 5),
+            name: "linked".into(),
+            origin: OriginParamId(5),
+            mutability: mojito_types::types::OriginMutability::Binder(
+                mojito_types::param_expr::ParamRef {
+                    id: ParamId::new(owner, 0),
+                    name: "mut".into(),
+                },
+            ),
+            infer_only: false,
+            lit: false,
+            mlir_origin: Some(OriginParamId(4)),
         },
     ];
     let generic = TyKind::GenericFunc(Box::new(GenericFuncTy {
@@ -3442,6 +3463,7 @@ fn origin_binders_round_trip() {
     assert_reprints(&program);
     let text = write::program(&program);
     assert!(text.contains("origin_binder {"), "{text}");
+    assert!(text.contains("mlir_origin: 4"), "{text}");
     let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
     match (parsed.program.functions[0].1.reg_types[&0]).kind() {
         TyKind::GenericFunc(generic) => assert_eq!(generic.decls, decls),
@@ -5831,6 +5853,7 @@ fn an_artifact_older_than_1_214_declares_its_closure_storage_origins() {
         mutability: mojito_types::types::OriginMutability::Fixed(true),
         infer_only: false,
         lit: false,
+        mlir_origin: None,
     };
     let field: Ty = TyKind::Ref(mojito_types::origin::RefTy {
         referent: Ty::int(),

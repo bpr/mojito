@@ -98,6 +98,13 @@ pub(super) fn verify_scope(
         .then(|| crate::mir::without_removed_forwards(name, function, declarations, &snapshot))
         .flatten();
     let function = view.as_ref().map_or(function, |(view, _)| view);
+    if let Some(declaration) = declaration {
+        errors.extend(
+            misnamed_raw_origins(&declaration.param_decls)
+                .into_iter()
+                .map(|finding| format!("{head}: {finding}")),
+        );
+    }
     let mut scope = Scope::of_function(name, declarations);
     scope.declare_loop_binders(&function.body);
     // A removed parameter no longer exists: a reference to it is out of
@@ -556,6 +563,9 @@ impl ScopeCx<'_> {
                 ParamDecl::Origin { .. } => {}
             }
         }
+        for finding in misnamed_raw_origins(decls) {
+            self.errors.push(format!("{} {role}: {finding}", self.head));
+        }
         mark
     }
 
@@ -1006,6 +1016,32 @@ impl TypeVisitor for ScopeCx<'_> {
     }
 }
 
+/// The origin binders of `decls` whose `_mlir_origin=` names a raw origin
+/// the list does not declare raw ([`ParamDecl::Origin::mlir_origin`]), as
+/// upstream's `Origin[_mlir_origin=r]` requires `r` to be a
+/// `_lit_origin_type_of_mut` binder.
+fn misnamed_raw_origins(decls: &[ParamDecl]) -> Vec<String> {
+    decls
+        .iter()
+        .filter_map(|decl| match decl {
+            ParamDecl::Origin {
+                name,
+                mlir_origin: Some(raw),
+                ..
+            } if !decls.iter().any(|sibling| {
+                matches!(sibling, ParamDecl::Origin { origin, lit: true, .. } if origin == raw)
+            }) =>
+            {
+                Some(format!(
+                    "origin binder '{name}' names raw origin #{}, which its list does not declare raw",
+                    raw.0
+                ))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
@@ -1113,6 +1149,7 @@ pub(super) mod tests {
                 mutability: mojito_types::types::OriginMutability::Fixed(false),
                 infer_only: false,
                 lit: false,
+                mlir_origin: None,
             },
             value_decl("B", 1, "n", Ty::int()),
         ]
@@ -1129,6 +1166,55 @@ pub(super) mod tests {
         assert!(misplaced_instance_argument(&origin_first(), &[]).is_some());
         assert!(misplaced_instance_argument(&origin_first(), &[n.clone(), origin]).is_some());
         assert!(misplaced_instance_argument(&origin_first(), &[n]).is_some());
+    }
+
+    /// `f[m: Bool, r: _lit_origin_type_of_mut[m], //, o: Origin[mut=m,
+    /// _mlir_origin=r]]`'s declared list, `o` naming the binder at
+    /// `mlir_origin`, which is raw when `raw` holds.
+    fn linked_origin(mlir_origin: u32, raw: bool) -> Vec<ParamDecl> {
+        let m = binder("f", 0, "m");
+        let origin = |slot: u32, name: &str, lit: bool, link| ParamDecl::Origin {
+            id: ParamId::new("f", slot as usize),
+            name: name.into(),
+            origin: mojito_types::origin::OriginParamId(slot),
+            mutability: mojito_types::types::OriginMutability::Binder(m.clone()),
+            infer_only: lit,
+            lit,
+            mlir_origin: link,
+        };
+        vec![
+            value_decl("f", 0, "m", Ty::bool()),
+            origin(1, "r", raw, None),
+            origin(
+                2,
+                "o",
+                false,
+                Some(mojito_types::origin::OriginParamId(mlir_origin)),
+            ),
+        ]
+    }
+
+    #[test]
+    fn scope_accepts_an_origin_binder_naming_its_raw_sibling() {
+        let declarations = declarations("f", linked_origin(1, true));
+        assert_eq!(
+            findings(&function_with(Vec::new()), &declarations),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn scope_rejects_an_origin_binder_naming_no_raw_sibling() {
+        for (link, raw) in [(1, false), (3, true)] {
+            let declarations = declarations("f", linked_origin(link, raw));
+            let found = findings(&function_with(Vec::new()), &declarations);
+            assert!(
+                found.iter().any(|finding| finding.contains(&format!(
+                    "origin binder 'o' names raw origin #{link}, which its list does not declare raw"
+                ))),
+                "{found:?}"
+            );
+        }
     }
 
     fn value_decl(owner: &str, slot: usize, name: &str, ty: Ty) -> ParamDecl {

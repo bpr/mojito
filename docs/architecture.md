@@ -2355,7 +2355,10 @@ and an explicit origin argument is an erased `MirParamArg` named by its
 origin binder; the call's `instantiated_args` hold a value for every
 parameter of that list, as upstream's call holds an attribute for each:
 the check records each origin binder's solved origin and each `mut=`
-binder's mutability in place (`Checker::declared_call_arguments`), a
+binder's mutability in place (`Checker::declared_call_arguments`; a raw
+binder a sibling's declared `_mlir_origin=` names, as an alias-typed
+`[o: O]`'s implicit `$_mlir_origin_o`, takes that sibling's origin,
+`ParamDecl::raw_origin_source`, as upstream infers it from `o`'s type), a
 construction's struct origins from the instance it builds, an implicit
 conversion's struct prefix from the instance its constructor builds (its
 refined `out self` under the own solution, a view source's place,

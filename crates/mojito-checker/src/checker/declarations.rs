@@ -539,10 +539,14 @@ fn origin_mut_source(args: &[mojito_ast::ast::ParamArg]) -> Option<&mojito_ast::
 }
 
 /// The type an origin binder declares: the `Origin` struct (or an
-/// `OriginSet`), or the raw `!lit.origin<m>` attribute upstream's `Origin`
+/// `OriginSet`), with the raw sibling binder its `_mlir_origin` argument
+/// names, if any, or the raw `!lit.origin<m>` attribute upstream's `Origin`
 /// holds as `_mlir_origin`.
 enum OriginBinderType {
-    Origin(OriginMutability),
+    Origin(
+        OriginMutability,
+        Option<mojito_types::origin::OriginParamId>,
+    ),
     Lit(OriginMutability),
 }
 
@@ -1419,9 +1423,9 @@ impl Checker {
                 binder
             }
         };
-        let (mutability, lit) = match mutability {
-            OriginBinderType::Origin(mutability) => (mutability, false),
-            OriginBinderType::Lit(mutability) => (mutability, true),
+        let (mutability, lit, mlir_origin) = match mutability {
+            OriginBinderType::Origin(mutability, mlir_origin) => (mutability, false, mlir_origin),
+            OriginBinderType::Lit(mutability) => (mutability, true, None),
         };
         Ok(Some(ParamDecl::Origin {
             id,
@@ -1430,13 +1434,16 @@ impl Checker {
             mutability,
             infer_only: tp.infer_only,
             lit,
+            mlir_origin,
         }))
     }
 
     /// The origin binder type `annotation` resolves to: the library
     /// `Origin` struct, its `mut` argument fixed, naming a binder, or left
     /// unbound (`o: Origin`, `o: Origin[mut=_]`), as upstream's partial
-    /// `#kgen.bind_params` leaves it, or the raw `!lit.origin<m>` attribute
+    /// `#kgen.bind_params` leaves it, with the raw binder its `_mlir_origin`
+    /// argument names (`Origin[mut=m, _mlir_origin=r]`, an alias-typed
+    /// binder's implicit `$_mlir_origin_o`), or the raw `!lit.origin<m>` attribute
     /// (`_mlir_origin: _lit_origin_type_of_mut[mut]`); `None` when it
     /// resolves to another type or to none. A `mut` argument of another
     /// type than `Bool` is the binding's type mismatch.
@@ -1447,7 +1454,7 @@ impl Checker {
         let Some(resolved) = self.binder_annotation_type(tp) else {
             return Ok(None);
         };
-        let mutability = match resolved {
+        let (mutability, mlir_origin) = match resolved {
             Ok(ty) => {
                 let (name, args) = match ty.kind() {
                     TyKind::Struct(name, args) => (name, args),
@@ -1455,7 +1462,7 @@ impl Checker {
                         return Ok(Some(OriginBinderType::Lit(OriginMutability::Fixed(*fixed))));
                     }
                     TyKind::LitOriginSet => {
-                        return Ok(Some(OriginBinderType::Origin(OriginMutability::Set)));
+                        return Ok(Some(OriginBinderType::Origin(OriginMutability::Set, None)));
                     }
                     TyKind::LitOrigin(LitOriginMut::Expr(mutability)) => {
                         return Ok(mutability.as_decl_ref().map(|binder| {
@@ -1469,9 +1476,20 @@ impl Checker {
                 if !self.is_library_origin(name) {
                     return Ok(None);
                 }
-                self.origin_mut_slot()
-                    .and_then(|slot| args.get(slot))
-                    .cloned()
+                let mlir_origin =
+                    self.origin_struct_slot("_mlir_origin")
+                        .and_then(|slot| match args.get(slot) {
+                            Some(TyArg::Origin(mojito_types::origin::Origin::Param(raw))) => {
+                                Some(*raw)
+                            }
+                            _ => None,
+                        });
+                (
+                    self.origin_struct_slot("mut")
+                        .and_then(|slot| args.get(slot))
+                        .cloned(),
+                    mlir_origin,
+                )
             }
             Err(error) => {
                 let Some(args) = self.origin_application(tp) else {
@@ -1491,10 +1509,13 @@ impl Checker {
                 if !only_mut || matches!(error, TypeError::TypeMismatch { .. }) {
                     return Err(error);
                 }
-                return Ok(Some(OriginBinderType::Origin(origin_mut_argument(&args))));
+                return Ok(Some(OriginBinderType::Origin(
+                    origin_mut_argument(&args),
+                    None,
+                )));
             }
         };
-        Ok(Some(OriginBinderType::Origin(match &mutability {
+        let mutability = match &mutability {
             Some(TyArg::Val(CtValue::Bool(fixed))) => OriginMutability::Fixed(*fixed),
             Some(TyArg::Val(CtValue::Expr(mutability)))
                 if let Some(binder) = mutability.as_decl_ref() =>
@@ -1513,7 +1534,8 @@ impl Checker {
             // A mutability left to inference, spelled as upstream spells an
             // unbound parameter.
             _ => OriginMutability::Binder(ParamRef::unbound("_")),
-        })))
+        };
+        Ok(Some(OriginBinderType::Origin(mutability, mlir_origin)))
     }
 
     /// The type a binder's annotation denotes: its value type, else the
@@ -1564,12 +1586,12 @@ impl Checker {
         self.is_library_origin(name).then_some(args)
     }
 
-    /// The slot of the library `Origin`'s `mut` binder in its declared
-    /// list.
-    fn origin_mut_slot(&self) -> Option<usize> {
+    /// The slot of the library `Origin`'s binder `name` (`mut`,
+    /// `_mlir_origin`) in its declared list.
+    fn origin_struct_slot(&self, name: &str) -> Option<usize> {
         self.structs
             .get("Origin")
-            .and_then(|info| info.params.iter().position(|decl| decl.name() == "mut"))
+            .and_then(|info| info.params.iter().position(|decl| decl.name() == name))
     }
 
     /// Whether the struct `name` names is `std.origin`'s `Origin`.
@@ -1763,10 +1785,24 @@ impl Checker {
             .cloned()
             .chain((0..outer_type_params.len()).filter_map(|index| {
                 let mut decl = self.origin_binder_at(outer_type_params, index)?;
-                if let ParamDecl::Origin { origin, .. } = &mut decl {
-                    *origin = mojito_types::origin::OriginParamId(
-                        u32::try_from(type_params.len() + index).unwrap_or(u32::MAX),
-                    );
+                if let ParamDecl::Origin {
+                    origin,
+                    mlir_origin,
+                    ..
+                } = &mut decl
+                {
+                    let shifted = |slot: u32| {
+                        mojito_types::origin::OriginParamId(
+                            u32::try_from(type_params.len())
+                                .ok()
+                                .and_then(|own| own.checked_add(slot))
+                                .unwrap_or(u32::MAX),
+                        )
+                    };
+                    *origin = shifted(u32::try_from(index).unwrap_or(u32::MAX));
+                    if let Some(raw) = mlir_origin {
+                        *raw = shifted(raw.0);
+                    }
                 }
                 Some(decl)
             }))

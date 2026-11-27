@@ -3490,6 +3490,87 @@ fn alias_bracket_hole_records_the_inferred_origin() {
 }
 
 #[test]
+fn raw_origin_binder_takes_its_naming_siblings_origin() {
+    // An origin binder whose type names a raw sibling as its `_mlir_origin`
+    // (an alias-typed `[o: O]`'s implicit `$_mlir_origin_o`, or a spelled
+    // `o: Origin[mut=m, _mlir_origin=r]`) records the link, and its call
+    // binds the raw binder and the `mut=` binder from the origin it binds
+    // `o` to, as upstream infers both from `o`'s type.
+    use mojito::CtValue;
+    use mojito::origin::{Origin, OriginParamId};
+    use mojito::types::{ParamDecl, TyArg};
+    let source = include_str!("../assets/ok/origin_alias_binder_mutability.mojo");
+    let compiler = Compiler::default();
+    let compiled = compiler
+        .compile_source(source, Path::new("origin_alias_binder_mutability.mojo"))
+        .expect("compile raw origin binders");
+    let mir = compiled.mir();
+    for callee in ["by_ref", "by_pointer", "spelled"] {
+        let decls = &mir
+            .declarations
+            .function(callee)
+            .unwrap_or_else(|| panic!("{callee} declared"))
+            .param_decls;
+        assert!(
+            matches!(
+                decls.as_slice(),
+                [
+                    ParamDecl::Value { .. },
+                    ParamDecl::Origin { lit: true, .. },
+                    ParamDecl::Origin {
+                        lit: false,
+                        mlir_origin: Some(OriginParamId(1)),
+                        ..
+                    },
+                ]
+            ),
+            "{callee} declares {decls:?}"
+        );
+    }
+    let main = &mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered")
+        .1;
+    let applications = main
+        .body
+        .instrs
+        .iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::Call {
+                func,
+                instantiated_args,
+                ..
+            } if ["by_ref", "by_pointer", "spelled"].contains(&func.0.as_str()) => {
+                Some((func.0.clone(), instantiated_args.clone()))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(applications.len(), 8, "{applications:?}");
+    let mutabilities = applications
+        .iter()
+        .map(|(callee, arguments)| match arguments.as_slice() {
+            [
+                TyArg::Val(CtValue::Bool(mutable)),
+                TyArg::Origin(raw),
+                TyArg::Origin(origin),
+            ] if raw == origin && !matches!(origin, Origin::Unbound) => *mutable,
+            _ => panic!("{callee} records {arguments:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        mutabilities,
+        [true, false, true, false, true, false, true, false]
+    );
+    assert_eq!(
+        compiler.execute(&compiled).unwrap().output,
+        "True\nFalse\nTrue\nFalse\nTrue\nFalse\nTrue\nFalse\n"
+    );
+}
+
+#[test]
 fn inferred_generic_method_calls_retain_parameter_declarations() {
     let source = "@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def size[T: Copyable & Movable & Deinitable](self, var **options: T) -> Int:\n        return self.bias + len(options)\n\ndef main():\n    var counter = Counter(10)\n    print(counter.size(left=1, right=2))\n";
     let compiler = Compiler::default().with_snippet_module_scope();

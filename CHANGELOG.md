@@ -2352,6 +2352,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A function whose origin binder is typed by an alias of the unapplied
+  `Origin` (`[o: O]` over `comptime O = Origin`), or spelled
+  `o: Origin[mut=m, _mlir_origin=r]`, now runs when its body reads `o.mut`
+  (or `m`), printing the mutability of the origin its call binds, as the
+  pin does (R2637). It stopped at elaboration with "cannot resolve
+  parameter `$mut_o`": the call left the implicit `$_mlir_origin_o` and
+  `$mut_o` binders unbound, where upstream infers both from `o`'s type.
+
 - A construction's recorded struct `mut=` argument is now the constructed
   type's, as upstream's constructor applies the type it builds (R2626),
   where it was worked out again from the origin's owner. With

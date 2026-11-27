@@ -1438,6 +1438,17 @@ artifact gives every subscript call none, which the verifier then rejects
 for a generic accessor (`verify_application`); the record is not
 upgraded. The package format moves to `mojito-package 284` (R2631).
 
+Schema 1.239 gives an `origin_binder` the raw binder its declared type
+names as its `_mlir_origin`: the optional `mlir_origin: <u32>`, the
+`origin` index of a `lit: true` sibling, for `o: Origin[mut=m,
+_mlir_origin=r]` and for an alias-typed `[o: O]` over `comptime O =
+Origin`, whose implicit `$_mlir_origin_o` it names. A call binds that raw
+binder, and the `mut=` binder governing it, from the origin it binds `o`
+to, as upstream infers both from `o`'s type. It is written only when
+present; an older artifact's binder names none, and the verifier rejects a
+link to a binder its list does not declare raw. The package format moves
+to `mojito-package 286` (R2637).
+
 Schema 1.238 gives a converted default its conversion's application:
 `checked_construct`'s optional `arguments: [<ty_arg>...]`, one per binder
 the converting constructor declares, over the binders of the declaration
@@ -2762,11 +2773,13 @@ is `!kgen.param_list<AnyType>`, a list of types) and is compile-time only, as
 or
 `value_param { owner, slot, name, type, default, callable_default, infer_only, variadic, constraints }`
 or (schema 1.186)
-`origin_binder { owner, slot, name, origin, mutability, infer_only }`,
+`origin_binder { owner, slot, name, origin, mutability, infer_only[, lit][, mlir_origin] }`,
 an origin parameter whose `origin` is the source index an
 `origin_param(int)` names it by and whose `mutability` is
 `mut_fixed(bool)`, `mut_binder(binder { owner, slot, name })` (the sibling
-`Bool` binder its `mut=` names), or `origin_set`.
+`Bool` binder its `mut=` names), or `origin_set`. `lit: true` marks a
+binder holding the raw `!lit.origin` attribute, and `mlir_origin` (schema
+1.239) is the `origin` index of the raw sibling its `_mlir_origin=` names.
 A variadic `value_param`'s `type` is the raw list `param_list(T)` the pack
 binds (schema 1.113), and each value it binds has the element type `T`.
 Callable defaults use `default_symbol` (positional, or the record

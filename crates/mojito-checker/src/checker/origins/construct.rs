@@ -359,8 +359,12 @@ impl Checker {
     /// where upstream's call reads the caller's implicit `self_is_mut`,
     /// is that binder's `$origin_mut` read ([`Mutability::mut_argument`]),
     /// and only an undecided one is [`CtValue::Deferred`] of the callee's
-    /// binder. `arguments` is returned as it stands when it is no
-    /// solution of the argument view.
+    /// binder. A raw origin binder no bracket or place binds takes the
+    /// binding of the sibling whose `_mlir_origin=` names it
+    /// ([`ParamDecl::raw_origin_source`]), and so does the `mut=` binder it
+    /// governs, as upstream infers both from that sibling's type.
+    /// `arguments` is returned as it stands when it is no solution of the
+    /// argument view.
     pub(in crate::checker) fn declared_call_arguments(
         &self,
         decls: &[ParamDecl],
@@ -373,14 +377,21 @@ impl Checker {
         {
             return arguments.to_vec();
         }
-        let origin = |id: OriginParamId| {
+        let own = |id: OriginParamId| {
             bracket
                 .get(&id)
                 .cloned()
                 .or_else(|| bindings.and_then(|bindings| bindings.tail(id)))
         };
+        // The binder whose binding `id` takes: its own, else the sibling's
+        // whose declared type names it as its `_mlir_origin`.
+        let source = |id: OriginParamId| match own(id) {
+            Some(_) => id,
+            None => ParamDecl::raw_origin_source(decls, id).unwrap_or(id),
+        };
+        let origin = |id: OriginParamId| own(source(id));
         let bound = |id: OriginParamId| {
-            bindings?.bound_mutability(id, &|owner| self.owner_reference_mutability(owner))
+            bindings?.bound_mutability(source(id), &|owner| self.owner_reference_mutability(owner))
         };
         let mut solved = arguments.iter();
         decls
@@ -400,7 +411,7 @@ impl Checker {
                     });
                     TyArg::Val(governed.map_or_else(
                         || CtValue::Deferred(decl.binder()),
-                        |id| match bracket.get(&id) {
+                        |id| match bracket.get(&source(id)) {
                             Some(origin) => self.call_mutability_slot(decl, origin, None),
                             None => self.call_mutability_slot(
                                 decl,

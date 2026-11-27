@@ -3541,6 +3541,13 @@ pub enum ParamDecl {
         /// [`TyArg::Origin`], and only the argument check and the binder's
         /// displayed type (`LITOrigin[m]`) tell them apart.
         lit: bool,
+        /// The raw origin binder this binder's declared type names as its
+        /// `_mlir_origin` (`o: Origin[mut=m, _mlir_origin=r]`, or the
+        /// implicit `$_mlir_origin_o` of an alias-typed `[o: O]`), beside
+        /// [`Self::Origin::mutability`], its `mut=` argument. A call infers
+        /// that binder from this one's origin, as upstream infers it from
+        /// `o`'s type ([`ParamDecl::raw_origin_source`]).
+        mlir_origin: Option<crate::origin::OriginParamId>,
     },
 }
 
@@ -4047,6 +4054,26 @@ impl ParamDecl {
                     ..
                 } if binder.id == *self.id())
             })
+    }
+
+    /// The origin binder among `decls` whose declared type names the raw
+    /// binder `raw` as its `_mlir_origin` (`o: Origin[mut=m,
+    /// _mlir_origin=r]`, an alias-typed `[o: O]`'s implicit
+    /// `$_mlir_origin_o`): the binder a call infers `raw` from, as upstream
+    /// infers a parameter from the type of one it binds. `None` when no
+    /// sibling names it.
+    pub fn raw_origin_source(
+        decls: &[Self],
+        raw: crate::origin::OriginParamId,
+    ) -> Option<crate::origin::OriginParamId> {
+        decls.iter().find_map(|decl| match decl {
+            Self::Origin {
+                origin,
+                mlir_origin: Some(named),
+                ..
+            } if *named == raw => Some(*origin),
+            _ => None,
+        })
     }
 
     /// Whether an instance or a call's argument view binds this binder by
@@ -5911,12 +5938,14 @@ pub fn same_generator_signature(left: &[ParamDecl], right: &[ParamDecl]) -> bool
                     mutability,
                     infer_only,
                     lit,
+                    mlir_origin,
                     ..
                 },
                 ParamDecl::Origin {
                     mutability: more_mutability,
                     infer_only: more_infer_only,
                     lit: more_lit,
+                    mlir_origin: more_mlir_origin,
                     ..
                 },
             ) => {
@@ -5927,7 +5956,10 @@ pub fn same_generator_signature(left: &[ParamDecl], right: &[ParamDecl]) -> bool
                     }
                     (mutability, more) => mutability == more,
                 };
-                same_mutability && infer_only == more_infer_only && lit == more_lit
+                same_mutability
+                    && infer_only == more_infer_only
+                    && lit == more_lit
+                    && mlir_origin == more_mlir_origin
             }
             _ => false,
         })
@@ -7125,6 +7157,7 @@ pub fn canonical_generic_signature(
                 mutability,
                 infer_only: _,
                 lit,
+                mlir_origin,
             } => {
                 let canonical_name = format!("${index}");
                 let canonical_id = ParamId::new(CONTRACT_BINDER_OWNER, index);
@@ -7151,6 +7184,7 @@ pub fn canonical_generic_signature(
                     mutability,
                     infer_only: false,
                     lit: *lit,
+                    mlir_origin: *mlir_origin,
                 }
             }
         })
@@ -11445,6 +11479,7 @@ mod instance_layout_tests {
                 mutability: OriginMutability::Binder(m),
                 infer_only: true,
                 lit: false,
+                mlir_origin: None,
             },
             ParamDecl::Type {
                 id: ParamId::new("S", 2),

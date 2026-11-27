@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2645**.
+Next free ID: **R2646**.
 
 ## Ordered Work
 
@@ -62,18 +62,35 @@ R2625–R2640 stage that, in
 [`docs/call-application-plan.md`](call-application-plan.md), one entry per
 slice.
 
-- [ ] **R2637 A call binds an alias-typed origin binder but not the
-  implicit `mut` and `_mlir_origin` binders its spelling declares**
+- [ ] **R2645 A struct's or method's origin binder whose type names a raw
+  sibling is rejected at its declaration**
 
-  `by_origin[o: O](ref[o] x)` over `comptime O = Origin` declares
-  upstream's implicit `$mut_o` and `$_mlir_origin_o` (R2396's alias-typed
-  case), and its call records both as placeholders.
-  - Lever: bind both from `o`'s solved origin, its mutability and the
-    origin itself, as upstream infers them from `o`'s type.
-  - Probe: `assets/ok/comptime_alias_struct_generator.mojo` records
-    `[$mut_o, _, origin_of(…)]`.
+  `struct Holder[o: O]` and a method `peek[o: O](ref[o] self)` over
+  `comptime O = Origin`, and their spelled `o: Origin[mut=m,
+  _mlir_origin=r]` forms, fail with "type mismatch for value passed to
+  '_mlir_origin' of 'Origin': expected LITOrigin[mut], found Origin",
+  where the pin runs them (`5`, and `True False`).
+  - Cause: `check_origin_argument_representation`'s
+    `origin_argument_is_raw` (`checker/type_resolution.rs`) finds `r` raw
+    only through `callable_type_params` or `enclosing_type_params`, and
+    neither holds the list while `classify_params_in_scope` classifies a
+    struct's or a method's binders. A free `def` takes the same path, but
+    there the error is swallowed.
+  - Lever: read the sibling's rawness from the decls classified so far.
+  - Then apply R2637's rule (`ParamDecl::raw_origin_source`: the raw
+    binder takes the origin of the sibling naming it) at the struct-side
+    sites: `constructed_type`, `own_origin_mutabilities`,
+    `own_mutability_values`, `place_struct_origins`, and
+    `deferred_mutability_value` (`checker/origins/construct.rs`),
+    `ParamDecl::place_origins_with`'s governed lookup
+    (`mojito-types/types.rs`), and `bind_alias_origin_placeholders`
+    (`checker/type_resolution.rs`).
+  - Probe: `var h = Holder(Pointer(to=n)); print(h.p[])` prints `5` at
+    the pin.
+  - Probe: `s.peek()` and `S(2).peek()` returning `o.mut` print `True`
+    and `False` at the pin.
   - Depends on nothing.
-  - Model: Opus, Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2638 A callable default that reads an earlier binder records its
   symbol as a placeholder**
@@ -114,7 +131,7 @@ slice.
   - Docs: `verify_application` in `docs/architecture.md`, the
     `ct_deferred` meanings in `docs/mir-text-format.md`, and B1e.
   - Slice B1e of `docs/call-application-plan.md`.
-  - Depends on R2633, R2634, R2637, R2638, R2439 (a call that infers no
+  - Depends on R2633, R2634, R2638, R2439 (a call that infers no
     origin for an open binder records `_`), R2517 (a
     synthesized move's register type keeps its member's own deferred
     `mut=`), and R2376 (`freeze(other: S)` declares no binder to name its
@@ -9720,6 +9737,12 @@ retained on purpose and re-probed rather than fixed; they are listed in
     Int]() -> Int` prints `7`, where the pin reports "invalid indirect
     call: failed to infer parameter 'origin_of(_mlir_origin)'". The
     call's application records `origin_unbound` for `o`.
+  - Probe: `by_r(n)` over `def by_r[m: Bool, r:
+    _lit_origin_type_of_mut[m], //, o: Origin[mut=m]](ref[o] x: Int) ->
+    Bool: return m` stops at elaboration ("cannot resolve parameter
+    `m`"), where the pin reports "failed to infer parameter
+    'origin_of(r)'". No sibling names `r` as its `_mlir_origin`, so the
+    call correctly leaves it unbound.
   - Probe: `h()` over `def h[o: ImmOrigin]() -> Int` prints `3`, where the
     pin reports "invalid call to 'h': failed to infer parameter
     'origin_of(_mlir_origin)'".

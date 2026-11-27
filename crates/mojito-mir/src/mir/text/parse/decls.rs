@@ -323,6 +323,7 @@ impl Decoder {
                         mutability: mojito_types::types::OriginMutability::Fixed(false),
                         infer_only: true,
                         lit: false,
+                        mlir_origin: None,
                     });
                 }
             }

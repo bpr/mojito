@@ -2041,6 +2041,7 @@ pub(super) fn upgrade_closure_storage_origins(declarations: &mut MirDeclarations
                             ),
                             infer_only: false,
                             lit: false,
+                            mlir_origin: None,
                         }),
                         _ => None,
                     }

@@ -885,6 +885,7 @@ assets/ok/optional_raising_subscript.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/optional_string_from_stringify.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/optional_value_protocols.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_alias_binder_comptime_application.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/origin_alias_binder_mutability.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_argument_alias_bodies.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_argument_direct_applications.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_binder_decided_mutability.mojo	-	ineligible	no-scalar-entry-shape

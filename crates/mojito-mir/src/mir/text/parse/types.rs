@@ -580,6 +580,11 @@ impl Decoder {
                     Ok(lit) => self.boolean(lit)?,
                     Err(()) => false,
                 };
+                // Schema 1.239: the raw binder its `_mlir_origin=` names.
+                let mlir_origin = match self.field(fields, "mlir_origin") {
+                    Ok(raw) => Some(OriginParamId(self.uint32(raw)?)),
+                    Err(()) => None,
+                };
                 self.unknown(
                     fields,
                     &[
@@ -590,6 +595,7 @@ impl Decoder {
                         "mutability",
                         "infer_only",
                         "lit",
+                        "mlir_origin",
                     ],
                 );
                 let id = self.binder_id(value, fields, &name)?;
@@ -600,6 +606,7 @@ impl Decoder {
                     mutability,
                     infer_only,
                     lit,
+                    mlir_origin,
                 })])
             }
             other => {

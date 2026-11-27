@@ -4106,6 +4106,7 @@ impl CheckedClosureStorage {
                     ),
                     infer_only: false,
                     lit: false,
+                    mlir_origin: None,
                 }
             })
             .collect()

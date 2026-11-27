@@ -2651,6 +2651,7 @@ fn param_decl(value: &ParamDecl) -> String {
             mutability,
             infer_only,
             lit,
+            mlir_origin,
         } => {
             let mut fields = vec![
                 ("owner", quote(&id.owner)),
@@ -2662,6 +2663,9 @@ fn param_decl(value: &ParamDecl) -> String {
             ];
             if *lit {
                 fields.push(("lit", "true".into()));
+            }
+            if let Some(raw) = mlir_origin {
+                fields.push(("mlir_origin", raw.0.to_string()));
             }
             record("origin_binder", &fields)
         }
