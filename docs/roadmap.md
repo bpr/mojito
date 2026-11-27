@@ -5100,62 +5100,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2397 A method of a struct with origin parameters never satisfies
-  a trait requirement that declares its own origin binder**
-
-  `struct B[so: ImmOrigin](T)` spelling `def read[o: ImmOrigin](self, p:
-  Pointer[Int, o]) -> Int` for the same requirement of `trait T` is
-  rejected ("method 'read' does not match the signature required by trait
-  'T'"), where the pin prints the sum for `b.read(Pointer(to=y))` and
-  through a generic `def g[X: T](x: X)`.
-  - `canonical_method_shape` (`checker/traits_support.rs`) compares origin
-    binders through the types naming them, by `OriginParamId`, and a
-    conformer's method numbers its own origin binders past its struct's
-    origin parameters while the requirement numbers from zero; upstream
-    compares the two signatures up to their own binders.
-  - The same requirement over a struct without origin parameters, in the
-    `Pointer[Int, o]`, `ref[o] p: Int`, and `Pointer[Int, _]` spellings,
-    already matches.
-  - Probe: a `ref [o]` contract names its binder by declared id
-    (`SigOrigin::Bound(Origin::Param(o))`), which a conformer's method
-    numbers past its struct's origin parameters while the requirement
-    numbers from zero, so the `ref_return` comparison must map the two
-    binder lists too.
-  - Found while landing R2342 (2026-11-19).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2658 A trait requirement taking a struct instance over its own
-  `mut=` and origin binders never matches its witness**
-
-  `def r[m: Bool, //, o: Origin[mut=m]](self, v: V[Int, o]) -> Int`
-  spelled the same in `trait R` and in `struct C(R)` is rejected ("struct
-  'C' method 'r' does not match the signature required by trait 'R'"),
-  where the pin prints `4 4` for `c.r(…)` and through `def g[X: R]`.
-  - `V` is `struct V[mut: Bool, //, T: Copyable, origin: Origin[mut=mut]]`.
-    The instance keeps its `mut=` slot as a read of the method's own value
-    binder `m`.
-  - `canonical_method_shape` (`checker/traits_support.rs`) compares that
-    read by binder identity, and the requirement's `m` and the witness's
-    `m` are different declarations.
-  - Upstream compares the two signatures up to their own binder lists.
-  - Lever: compare value-binder reads by position in the two methods'
-    binder lists, as R2397 asks for origin binders. If R2397 lands first,
-    extend its mapping rather than adding a second one.
-  - The same pair over `Pointer[Int, o]`, and `[o: ImmOrigin]` over a
-    struct without a `mut=` slot, already match.
-  - Once R2376 declares the pair for every struct-typed `_` origin, this
-    stops two bundled requirements: `Hasher._update_with_bytes(mut self,
-    data: Span[Byte, _])` (`std/hash/hasher.mojo`) and
-    `Writer.write_string(mut self, string: StringSpan)`
-    (`std/format/__init__.mojo`).
-  - Probe: `def r(self, v: V[Int, _])` in both the requirement and a
-    conformer without origin parameters runs today (`4 4`) and fails the
-    same way once R2376 lands.
-  - Found while planning R2376 (2026-11-27).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R550 A refining trait cannot restate an inherited requirement**
 
   Problem: `trait D(A)` declaring `def a(self) -> Int: ...` that `A`
@@ -5399,6 +5343,16 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: the bundled `VariadicPack._write_to` takes `start`, `end`, and
     `sep` as `StaticString` where upstream takes `StringSlice[O1]` (and
     `O2`, `O3`) defaulted to `StaticString("")`.
+  - Probe: `def f[o: ImmOrigin](s: StringSlice[o] = "x")` fails the same
+    way ("expected StringSpan[false], found StringLiteral[\"x\"]"), and so
+    does `def f[m: Bool, //, o: Origin[mut=m]](v: V[o] = 7)` over a `V`
+    whose `@implicit` initializer returns `V[ImmStaticOrigin]` ("expected
+    V[m], found IntLiteral[7]"). The pin prints `1 3 4` for `f(), f("abc"),
+    f(a)` and `7 3 5` for `f(), f(V[MutAnyOrigin](other=3)), f(5)`.
+  - Probe: once R2376 declares the binder pair for a bare `StringSlice`
+    parameter, the bundled library stops packaging at `print`'s `sep:
+    StringSlice = " "` (`std/io/io.mojo`) with "expected
+    StringSpan[$mut_sep], found StringLiteral[\" \"]".
   - Found while landing R1302 (2026-11-05).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -11960,13 +11914,20 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     origin into argument exclusivity. Confirm R1156's `Span` probes and
     delete it with this entry. Its pointer-alias probe is R2441's.
   - With the gate removed, the bundled library now packages past every
-    literal passed to a bare `StringSpan` parameter and stops at the
-    `Hasher` requirement (`AHasher._update_with_bytes`, R2658); the
-    `Writer` requirement fails past it (R2658, and R2397 for a conformer
-    with origin parameters). A conversion's `mut=` now solves (R2656), so the user
-    `V` probe of `h(xs)` over `def h(v: V[Int, _])` should print `True`
-    once the gate is gone. The site list past R2658 is unverified: if a packaging failure appears
-    that is none of these, file it and keep the gate.
+    literal passed to a bare `StringSpan` parameter and past the `Hasher`
+    requirement (`AHasher._update_with_bytes`), and stops at `print`'s
+    `sep: StringSlice = " "` default (R1926). A conversion's `mut=` now
+    solves (R2656), so the user `V` probe of `h(xs)` over `def h(v: V[Int,
+    _])` should print `True` once the gate is gone. The site list past
+    R1926 is unverified (the `Writer.write_string` requirement among it):
+    if a packaging failure appears that is none of these, file it and keep
+    the gate.
+  - Probe: `g(c, v)` over `def g[X: R](x: X, v: V[Int, _]) -> Int: return
+    x.r(v)`, with `R` requiring `def r[m: Bool, //, o: Origin[mut=m]](self,
+    v: V[Int, o]) -> Int`, fails ("no overload matches"), where the pin
+    prints `4`. A free `r` over the same binders, called from `def g(v:
+    V[Int, _])`, fails the same way ("expected V[mut, Int], found V[mut,
+    Int]"): the `_` origin has no `mut=` binder to hand on.
   - Check packaging with a fresh `MOJITO_CACHE_DIR`. A cached package
     masks the failure.
   - Probe: `reflect[type_of(s)].name()` in `def f(s: Span[Int, _])`,
@@ -12002,7 +11963,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R2372 (2026-11-19).
   - Landing it unblocks R2396, which retires the pre-check origin
     spelling.
-  - Depends on R2656, R2657, R2658, R2397.
+  - Depends on R2656, R2657, R2658, R2397, R1926.
   - Model: Fable, Planned.
 
 - [ ] **R2659 A spelled origin argument counts as supplied to a

@@ -1724,7 +1724,9 @@ assets/ok/trait_requirement_default_reads_self.mojo	-	ineligible	no-scalar-entry
 assets/ok/trait_requirement_docstring.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_indexes_own_pack.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_origin_binder_in_type.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/trait_requirement_own_mut_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_own_origin_binder.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/trait_requirement_own_origin_binder_parametric_owner.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_own_parameter_through_bound.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_parameter_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_variadic_collector.mojo	-	ineligible	no-scalar-entry-shape

@@ -2397,7 +2397,7 @@ impl Checker {
                 .map(|(witness, requirement)| Self::bind_unbound_tails(witness, requirement))
                 .collect();
         }
-        if normalized.ref_return != required.ref_return {
+        if !same_ref_return(&normalized, required) {
             let copyable_reference_refinement = allow_copyable_iterator_reference
                 && normalized.ref_return.is_some()
                 && required.ref_return.is_none()

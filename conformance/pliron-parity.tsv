@@ -1725,7 +1725,9 @@ assets/ok/trait_requirement_default_reads_self.mojo	main	exe-differential	saniti
 assets/ok/trait_requirement_docstring.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_indexes_own_pack.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_origin_binder_in_type.mojo	main	exe-differential	sanitized
+assets/ok/trait_requirement_own_mut_binder.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_own_origin_binder.mojo	main	exe-differential	sanitized
+assets/ok/trait_requirement_own_origin_binder_parametric_owner.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_own_parameter_through_bound.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_parameter_default.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_variadic_collector.mojo	main	exe-differential	sanitized

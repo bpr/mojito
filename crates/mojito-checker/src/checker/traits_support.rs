@@ -223,6 +223,17 @@ pub(super) fn method_satisfies_requirement(got: &MethodSig, required: &MethodSig
     got.error == required.error
 }
 
+/// Whether `a` and `b` return one `ref` contract up to their own binders,
+/// each named by its place in its method's list ([`canonicalize_ref_sigs`]).
+pub(super) fn same_ref_return(a: &MethodSig, b: &MethodSig) -> bool {
+    let canonical = |method: &MethodSig| {
+        let mut shape = method.clone();
+        canonicalize_ref_sigs(method, &mut shape);
+        shape.ref_return
+    };
+    a.ref_return == b.ref_return || canonical(a) == canonical(b)
+}
+
 /// A method's availability clauses with its own binders named by their
 /// position, as [`canonical_method_shape`] names them in its signature: a
 /// binder an operand's expression reads (`d.is_floating_point()`) as well
@@ -303,28 +314,32 @@ pub(super) fn method_func_ty(
     }
 }
 
+/// The base of the slots a method's own origin binders and their `mut=`
+/// binders take in its canonical shape: above every declared,
+/// reference-mutability, and pack binder id.
+const CANONICAL_ORIGIN_BASE: u32 = 1 << 24;
+
 /// A method's contract with its own binders canonicalized to signature slots
 /// (`canonical_generic_signature`): a witness spelled `def push[X: Hasher]`
 /// satisfies a requirement spelled `def push[H: Hasher]`, since a binder's
 /// identity is its declaration's and its spelling is not part of the shape.
 fn canonical_method_shape(method: &MethodSig) -> MethodSig {
     let decls = method.decls();
+    let mut shape = canonical_own_binder_reads(method);
     if decls.is_empty() {
-        // Origin binders compare through the types naming them, by slot, as
-        // they do beside argument binders below: each declaration's own
-        // binder ids name its owner.
-        let mut shape = method.clone();
+        // Own origin and `mut=` binders compare through the types naming
+        // them, by the slots `canonical_own_binder_reads` gave them, as they
+        // do beside argument binders below.
         shape.declared = decls.into_owned();
         canonicalize_ref_sigs(method, &mut shape);
         return shape;
     }
-    let mut types = method.params.clone();
-    types.push(method.ret.clone());
-    types.extend(method.variadic.clone());
-    types.extend(method.kw_variadic.clone());
-    types.extend(method.error.clone());
+    let mut types = shape.params.clone();
+    types.push(shape.ret.clone());
+    types.extend(shape.variadic.clone());
+    types.extend(shape.kw_variadic.clone());
+    types.extend(shape.error.clone());
     let (decls, mut types) = mojito_types::types::canonical_generic_signature(&decls, &types);
-    let mut shape = method.clone();
     shape.declared = decls;
     shape.error = method
         .error
@@ -342,6 +357,78 @@ fn canonical_method_shape(method: &MethodSig) -> MethodSig {
     shape.params = types;
     canonicalize_ref_sigs(method, &mut shape);
     shape
+}
+
+/// `method` with its own origin binders and their `mut=` binders named by
+/// their place in the own list wherever its signature types read them
+/// (`V[m, Int, o]` for `v: V[Int, o]` over `m: Bool, //, o:
+/// Origin[mut=m]`), as [`canonicalize_ref_sigs`] names them in a `ref`
+/// contract. Neither is an argument binder, so
+/// `canonical_generic_signature` leaves both out; each declaration's own
+/// binder ids name its owner, and a method numbers its own origin ids past
+/// every origin its owner declares.
+fn canonical_own_binder_reads(method: &MethodSig) -> MethodSig {
+    let context = ParamContext::detached();
+    let mut renamed = mojito_types::param_expr::ParamBindings::new();
+    for (slot, decl) in method.declared.iter().enumerate() {
+        if decl.is_origin_mutability_binder(&method.declared) {
+            renamed.bind(
+                decl.id().clone(),
+                context.decl_ref(
+                    ParamId::new(
+                        mojito_types::types::CONTRACT_BINDER_OWNER,
+                        CANONICAL_ORIGIN_BASE as usize + slot,
+                    ),
+                    &format!("${slot}"),
+                    decl.binder_meta(),
+                ),
+            );
+        }
+    }
+    let origins: HashMap<u32, mojito_types::origin::Origin> = own_origin_slots(method)
+        .map(|(id, slot)| (id.0, mojito_types::origin::Origin::Param(slot)))
+        .collect();
+    let mut shape = method.clone();
+    if renamed.is_empty() && origins.is_empty() {
+        return shape;
+    }
+    let rename = |ty: &Ty| {
+        let ty = mojito_types::types::replace_parameters(&context, ty, &renamed, 0)
+            .unwrap_or_else(|_| ty.clone());
+        mojito_types::types::bind_origin_params(&ty, &origins)
+    };
+    shape.params = method.params.iter().map(rename).collect();
+    shape.ret = rename(&method.ret);
+    shape.variadic = method.variadic.as_ref().map(rename);
+    shape.kw_variadic = method.kw_variadic.as_ref().map(rename);
+    shape.error = method.error.as_ref().map(rename);
+    shape
+}
+
+/// Each of `method`'s own origin binders with the canonical id its place
+/// among them gives it, above [`CANONICAL_ORIGIN_BASE`].
+fn own_origin_slots(
+    method: &MethodSig,
+) -> impl Iterator<
+    Item = (
+        mojito_types::origin::OriginParamId,
+        mojito_types::origin::OriginParamId,
+    ),
+> + '_ {
+    method
+        .declared
+        .iter()
+        .filter_map(|decl| match decl {
+            ParamDecl::Origin { origin, .. } => Some(*origin),
+            _ => None,
+        })
+        .zip(0u32..)
+        .map(|(id, index)| {
+            (
+                id,
+                mojito_types::origin::OriginParamId(CANONICAL_ORIGIN_BASE + index),
+            )
+        })
 }
 
 /// Each of `method`'s own argument binders as a reference to its
@@ -388,18 +475,7 @@ fn canonicalize_ref_sigs(method: &MethodSig, shape: &mut MethodSig) {
             other => other.clone(),
         }
     }
-    // Above every declared, reference-mutability, and pack binder id.
-    const CANONICAL_ORIGIN_BASE: u32 = 1 << 24;
-    let origins: HashMap<OriginParamId, OriginParamId> = method
-        .declared
-        .iter()
-        .filter_map(|decl| match decl {
-            ParamDecl::Origin { origin, .. } => Some(*origin),
-            _ => None,
-        })
-        .zip(0u32..)
-        .map(|(id, index)| (id, OriginParamId(CANONICAL_ORIGIN_BASE + index)))
-        .collect();
+    let origins: HashMap<OriginParamId, OriginParamId> = own_origin_slots(method).collect();
     let context = ParamContext::detached();
     let values = canonical_binder_refs(method);
     // A `mut=` binder an own origin binder declares is named by its place

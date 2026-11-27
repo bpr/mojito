@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A conformer's method now satisfies a trait requirement that declares its
+  own origin binders, and their `mut=` binders, over a struct instance or a
+  `ref` result, also when the conformer's struct has origin parameters, as
+  upstream compares two signatures up to their own binder lists (R2658,
+  R2397). Such methods were rejected as not matching the requirement.
+
 - An origin binder a parameter names now solves through an implicit
   conversion whose initializer refines `out self`, as upstream unifies the
   parameter with the converted value's type (R2657). `g("xy")` over `def
