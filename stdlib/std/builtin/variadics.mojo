@@ -44,9 +44,7 @@
 # - the `Copyable` conformance has no `else` message, and
 #   `consume_elements` spells its `where ... else` message in the tuple
 #   form (R1115);
-# - `element_types` has no `@deprecated(use=Ts)` (R1925);
-# - `_write_to`'s delimiters are `StaticString`s where upstream's are
-#   origin-parametric `StringSlice`s (R1926).
+# - `element_types` has no `@deprecated(use=Ts)` (R1925).
 from std.builtin.constrained import _constrained_conforms_to
 from std.builtin.reversed import reversed
 from std.collections.optional import Optional
@@ -54,7 +52,7 @@ from std.iter import Iterable, Iterator, StopIteration
 from std.range import range
 from std.reflection.type_info import _unqualified_type_name
 from std.span import Span
-from std.string import StaticString
+from std.string import StaticString, StringSpan
 
 
 struct _MLIR:
@@ -833,18 +831,29 @@ struct VariadicPack[
         return __mlir_op.`kgen.struct.load_indirect`(self.get_as_kgen_pack())
 
     def _write_to[
-        *, is_repr: Bool = False
+        O1: ImmOrigin,
+        O2: ImmOrigin,
+        O3: ImmOrigin,
+        *,
+        is_repr: Bool = False,
     ](
         self,
         mut writer: Some[Writer],
-        start: StaticString = StaticString(""),
-        end: StaticString = StaticString(""),
-        sep: StaticString = StaticString(", "),
+        start: StringSpan[O1] = StaticString(""),
+        end: StringSpan[O2] = StaticString(""),
+        sep: StringSpan[O3] = StaticString(", "),
     ) where Self.Ts.all_conforms_to[Writable]():
         """Writes a sequence of writable values from a pack to a writer with
         delimiters.
 
+        This function formats a variadic pack of writable values as a delimited
+        sequence, writing each element separated by the specified separator and
+        enclosed by start and end delimiters.
+
         Parameters:
+            O1: The origin of the open `StringSpan`.
+            O2: The origin of the close `StringSpan`.
+            O3: The origin of the separator `StringSpan`.
             is_repr: Whether to use repr formatting for elements.
 
         Args:

@@ -690,6 +690,7 @@ struct MethodResidue {
     ref_return: Option<mojito_types::origin::RefSig>,
     view_return_interior: Vec<String>,
     view_return: Vec<ViewReturnOrigin>,
+    default_solves: Vec<Option<Ty>>,
     implicit: bool,
     origin_binders: Vec<
         Option<(
@@ -1667,6 +1668,7 @@ impl MethodResidue {
             ref_return: sig.ref_return.clone(),
             view_return_interior: sig.view_return_interior.clone(),
             view_return: sig.view_return.clone(),
+            default_solves: sig.default_solves.clone(),
             implicit: sig.implicit,
             origin_binders: sig.origin_binders.clone(),
             synthesized_default: sig.synthesized_default,
@@ -1718,6 +1720,7 @@ impl MethodResidue {
             ref_return: self.ref_return,
             view_return_interior: self.view_return_interior,
             view_return: self.view_return,
+            default_solves: self.default_solves,
             implicit: self.implicit,
             origin_binders: self.origin_binders,
             synthesized_default: self.synthesized_default,
@@ -2072,6 +2075,7 @@ mod tests {
             ref_return: None,
             view_return_interior: Vec::new(),
             view_return: Vec::new(),
+            default_solves: Vec::new(),
             implicit: false,
             origin_binders: Vec::new(),
             synthesized_default: false,

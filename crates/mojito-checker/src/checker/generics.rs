@@ -2066,7 +2066,16 @@ impl Checker {
             let expression = match slot {
                 ArgSlot::Positional(position) => &args[*position],
                 ArgSlot::Keyword(position) => &kwargs[*position].value,
-                ArgSlot::Default => continue,
+                // An argument left out solves the binders its parameter's
+                // type names from its default's solved type.
+                ArgSlot::Default => {
+                    if let Some(Some(solved)) = signature.default_solves.get(index) {
+                        pattern_names.push(signature.names[index].clone());
+                        patterns.push(params[index].clone());
+                        actuals.push(solved.clone());
+                    }
+                    continue;
+                }
             };
             pattern_names.push(signature.names[index].clone());
             let actual = self.solving_argument_ty(

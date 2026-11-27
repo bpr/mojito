@@ -193,6 +193,9 @@ pub(super) fn method_satisfies_requirement(got: &MethodSig, required: &MethodSig
     got_shape.overload = None;
     got_shape.required.clone_from(&required.required);
     got_shape.defaults.clone_from(&required.defaults);
+    got_shape
+        .default_solves
+        .clone_from(&required.default_solves);
     got_shape.positional_only = required.positional_only;
     got_shape.synthesized_default = required.synthesized_default;
     // `@__unsafe_nested_origins_read_only` decides how the witness's own

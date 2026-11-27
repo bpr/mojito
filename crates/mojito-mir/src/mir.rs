@@ -2465,7 +2465,7 @@ fn lower_function(
                     parameter: p,
                     default: p.default,
                     binders: &enclosing_binders,
-                    ty: signature.param(param),
+                    ty: signature.default_param(param),
                 },
                 functions,
                 declarations,
@@ -2655,7 +2655,7 @@ fn lower_struct_member<P: DeclaredParam>(
                     parameter: param,
                     default: m.defaults.get(position).copied().flatten(),
                     binders: &enclosing_binders,
-                    ty: signature.param(position),
+                    ty: signature.default_param(position),
                 },
                 functions,
                 declarations,
@@ -2913,7 +2913,7 @@ fn lower_requirement_defaults(
         .map(|(position, param)| {
             let ty = m
                 .signature
-                .param(*position)
+                .default_param(*position)
                 .and_then(|ty| crate::mir::call_defaults::replace_abstract_self(ty, &self_type));
             lower_default(
                 DefaultLowering {

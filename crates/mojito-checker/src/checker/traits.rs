@@ -585,8 +585,23 @@ impl Checker {
         self.push_param_scope(&declared);
         self.enclosing_type_params.extend(m.type_params.clone());
         self.enclosing_param_decls.extend(declared.iter().cloned());
-        let checked =
-            self.check_parameter_defaults(&m.params, &types, &ParamDecl::argument_decls(&declared));
+        let checked = self
+            .check_parameter_defaults(&m.params, &types, &declared)
+            .map(|solves| {
+                for (param, solved) in solves.into_iter().enumerate() {
+                    if let Some(solved) = solved {
+                        self.declaration_types.borrow_mut().insert(
+                            mojito_checked::checked::AnnotationSite::MethodParamDefault {
+                                module: module.cloned(),
+                                declaration: trait_name.to_string(),
+                                method: index,
+                                param,
+                            },
+                            solved,
+                        );
+                    }
+                }
+            });
         self.pop_param_scope();
         self.method_site = saved_site;
         self.exit_struct_scope(saved_scope);
@@ -665,6 +680,18 @@ impl Checker {
                 })
                 .collect::<Vec<_>>();
             let all_types = this.param_tys(&m.params, owner, &mut declared)?;
+            let default_solves = regular
+                .iter()
+                .map(|(index, param)| {
+                    param.default.as_ref().and_then(|default| {
+                        this.signature_default_solve(
+                            (&param.name, default),
+                            &all_types[*index],
+                            &declared,
+                        )
+                    })
+                })
+                .collect::<Vec<_>>();
             let ret = match &m.ret {
                 Some(t) => this.emit_expr_type(t)?,
                 None => Ty::none(),
@@ -693,7 +720,7 @@ impl Checker {
                 this,
             )?;
             Ok((
-                defaults,
+                (defaults, default_solves),
                 all_types,
                 ret,
                 error,
@@ -703,7 +730,8 @@ impl Checker {
         self.pop_param_scope();
         self.enclosing_type_params = saved_type_params;
         self.enclosing_param_decls = saved_decls;
-        let (defaults, all_types, ret, error, (self_ref, ref_params, ref_return)) = signature?;
+        let ((defaults, default_solves), all_types, ret, error, (self_ref, ref_params, ref_return)) =
+            signature?;
         self.check_result_origins(
             m.ret.as_ref(),
             m.ret_reference.as_ref(),
@@ -735,6 +763,7 @@ impl Checker {
                 .iter()
                 .map(|(index, _)| defaults[*index].clone())
                 .collect(),
+            default_solves,
             variadic: collectors.variadic,
             variadic_index: collectors.variadic_index,
             variadic_convention: collectors.variadic_convention,
@@ -2430,6 +2459,7 @@ impl Checker {
             names: req_sig.names.clone(),
             required: req_sig.required.clone(),
             defaults: req_sig.defaults.clone(),
+            default_solves: req_sig.default_solves.clone(),
             variadic: req_sig
                 .variadic
                 .as_ref()

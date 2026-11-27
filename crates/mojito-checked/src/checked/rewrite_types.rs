@@ -1100,12 +1100,14 @@ impl RewriteTypes for CheckedSignature {
         let Self {
             parameters,
             params,
+            defaults,
             result,
             effect,
             receiver,
         } = self;
         parameters.rewrite_types(rewrite);
         params.rewrite_types(rewrite);
+        defaults.rewrite_types(rewrite);
         result.rewrite_types(rewrite);
         effect.rewrite_types(rewrite);
         receiver.rewrite_types(rewrite);

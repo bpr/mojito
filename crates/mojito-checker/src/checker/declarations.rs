@@ -774,6 +774,14 @@ impl Checker {
             self.enclosing_struct_type_params.get(),
             self,
         )?;
+        let default_solves = regular
+            .iter()
+            .map(|(index, p)| {
+                p.default.as_ref().and_then(|default| {
+                    self.signature_default_solve((&p.name, default), &all_types[*index], &decls)
+                })
+            })
+            .collect();
         Ok(MethodSig {
             availability,
             declared: decls,
@@ -796,6 +804,7 @@ impl Checker {
                     })
                 })
                 .collect(),
+            default_solves,
             variadic: collectors.variadic,
             variadic_index: collectors.variadic_index,
             variadic_convention: collectors.variadic_convention,
@@ -2190,20 +2199,41 @@ impl Checker {
         // declaration order.
         let effect_key =
             self.method_effect_key(declaration, lifecycle_method_name(m), overload_index)?;
-        self.check_member(
+        let default_solves = self.check_member(
             self_ty,
             m,
             (module, declaration, method_index),
             &owner,
             &availability,
             effect_key,
-        )
+        )?;
+        let default_solves: Vec<Option<Ty>> = m
+            .params
+            .iter()
+            .zip(default_solves)
+            .filter(|(p, _)| p.kind == mojito_ast::ast::ParamKind::Regular && !p.is_named_result())
+            .map(|(_, solved)| solved)
+            .collect();
+        if default_solves.iter().any(Option::is_some)
+            && let Some(info) = self.structs.get_mut(declaration)
+        {
+            info.methods
+                .entry(lifecycle_method_name(m).to_string())
+                .and_modify(|methods| {
+                    if let Some(signature) = methods.get_mut(overload_index) {
+                        signature.default_solves = default_solves;
+                    }
+                });
+        }
+        Ok(())
     }
 
     /// Check member `m`, the `method_index`-th of declaration `declaration`
     /// (a struct, or the trait whose default it is), its own binders owned
     /// by `owner`, under its compiled `availability`, its body committing
-    /// its transfer effects under `effect_key`.
+    /// its transfer effects under `effect_key`. Per declared parameter, the
+    /// result holds the type its default solves its own binders to, which
+    /// its [`AnnotationSite::MethodParamDefault`] site records.
     pub(super) fn check_member(
         &mut self,
         self_ty: &Ty,
@@ -2212,7 +2242,7 @@ impl Checker {
         owner: &str,
         availability: &[GenericConstraint],
         effect_key: String,
-    ) -> Result<(), TypeError> {
+    ) -> Result<Vec<Option<Ty>>, TypeError> {
         // The body reads every value binder the method declares, an
         // origin's `mut=` binder included.
         let declared = self.classify_param_list(owner, &m.type_params)?;
@@ -2261,7 +2291,21 @@ impl Checker {
                     .flatten();
                 self.record_declaration_verdict(site, verdict);
             }
-            self.check_method_inner(self_ty, m, owner, effect_key)
+            let default_solves = self.check_method_inner(self_ty, m, owner, effect_key)?;
+            for (param, solved) in default_solves.iter().enumerate() {
+                if let Some(solved) = solved {
+                    self.declaration_types.borrow_mut().insert(
+                        mojito_checked::checked::AnnotationSite::MethodParamDefault {
+                            module: module.cloned(),
+                            declaration: declaration.to_string(),
+                            method: method_index,
+                            param,
+                        },
+                        solved.clone(),
+                    );
+                }
+            }
+            Ok(default_solves)
         })();
         self.pop_assumptions();
         self.enclosing_type_params = saved;
@@ -2278,7 +2322,7 @@ impl Checker {
         m: &Method,
         owner: &str,
         effect_key: String,
-    ) -> Result<(), TypeError> {
+    ) -> Result<Vec<Option<Ty>>, TypeError> {
         check_operator_method(&m.name, m.has_self, &m.params)?;
         self.check_decorators(
             DecoratorSite::Method {
@@ -2465,12 +2509,19 @@ impl Checker {
         // A default may name the method's own value parameters
         // (`x: Int = Self.n + j`), bound around the defaults as in the body.
         let method_decls = ParamDecl::argument_decls(&declared);
+        // The parameter types name the method's own origin binders past
+        // its owner's, as its signature numbers them.
+        let numbered = self.classify_param_list_after(
+            owner,
+            &m.type_params,
+            self.enclosing_struct_type_params.get(),
+        )?;
         self.push_scope();
         let defaults = self
             .declare_value_parameters(&declared)
-            .and_then(|()| self.check_method_defaults(m));
+            .and_then(|()| self.check_method_defaults(m, &numbered));
         self.pop_scope();
-        defaults?;
+        let default_solves = defaults?;
         self.push_scope();
         self.raising_context
             .push(self.declared_error(m.raises, m.raises_type.as_ref())?);
@@ -2532,7 +2583,7 @@ impl Checker {
         }
         self.raising_context.pop();
         self.pop_scope();
-        result
+        result.map(|()| default_solves)
     }
 
     /// Verify an `out self` lifecycle method (`method`) assigns every declared field
@@ -3167,43 +3218,46 @@ impl Checker {
 
     /// Each method parameter default fits its parameter's type and names no
     /// runtime binding.
-    fn check_method_defaults(&self, m: &Method) -> Result<(), TypeError> {
+    /// Check each default of `m`, whose whole declared list is `declared`:
+    /// per declared parameter, the type its default solves the binders its
+    /// type names to.
+    fn check_method_defaults(
+        &self,
+        m: &Method,
+        declared: &[ParamDecl],
+    ) -> Result<Vec<Option<Ty>>, TypeError> {
         super::statements::reject_default_lambdas(&m.params)?;
-        for param in &m.params {
-            let Some(default) = &param.default else {
-                continue;
-            };
-            self.check_parameter_default(&param.name, default, &self.ty_from_anno(&param.ty)?)?;
-        }
-        Ok(())
+        m.params
+            .iter()
+            .map(|param| {
+                param.default.as_ref().map_or(Ok(None), |default| {
+                    self.check_parameter_default(
+                        (&param.name, default),
+                        &self.ty_from_anno(&param.ty)?,
+                        declared,
+                    )
+                })
+            })
+            .collect()
     }
 
-    /// A method parameter `name`'s default fits its type `expected` and
-    /// names no runtime binding.
+    /// A method parameter `name`'s default fits its type `expected`, or the
+    /// type it solves the binders of `declared` that type names to, which is
+    /// returned ([`Self::check_default_fits`]), and names no runtime binding.
     pub(super) fn check_parameter_default(
         &self,
-        name: &str,
-        default: &Expr,
+        (name, default): (&str, &Expr),
         expected: &Ty,
-    ) -> Result<(), TypeError> {
+        declared: &[ParamDecl],
+    ) -> Result<Option<Ty>, TypeError> {
         if let Some(name) = self.dynamic_default_reference(default) {
             return Err(TypeError::DynamicDefault(name));
         }
         let found = self.infer_in_context(default, expected, true)?;
         self.record_default_literal_materialization(default, &found, expected)?;
-        // Fall back to an `@implicit` converting constructor (records the
-        // ctor target for omitted-arg materialization), matching the
-        // free-function default path and the binding/argument positions.
-        if !self.coerces_by_origins(&found, expected)
-            && !self.record_constructor_conversion(default, &found, expected)?
-        {
-            return Err(TypeError::TypeMismatch {
-                expected: expected.to_string(),
-                found: found.to_string(),
-                context: format!("default value of method parameter '{name}'"),
-            });
-        }
-        Ok(())
+        self.check_default_fits((name, default), (&found, expected), declared, &|| {
+            format!("default value of method parameter '{name}'")
+        })
     }
 
     /// Record the conversion of a numeric-literal default (`= TWO`, `= K + 1`)

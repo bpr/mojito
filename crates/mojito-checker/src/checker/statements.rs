@@ -4318,7 +4318,20 @@ impl Checker {
             ret_ty.clone(),
         );
         let arguments = ParamDecl::argument_decls(&decls);
-        self.check_parameter_defaults(params, &param_tys, &arguments)?;
+        let default_solves = self.check_parameter_defaults(params, &param_tys, &decls)?;
+        for (param, solved) in default_solves.iter().enumerate() {
+            if let Some(solved) = solved {
+                self.declaration_types.borrow_mut().insert(
+                    mojito_checked::checked::AnnotationSite::FunctionParamDefault {
+                        module: stmt.module.clone(),
+                        declaration: stmt.span,
+                        syntax: stmt.syntax_id,
+                        param,
+                    },
+                    solved.clone(),
+                );
+            }
+        }
         let declared_error = self.declared_error(*raises, raises_type.as_ref())?;
         let effect_raises = declared_error
             .as_ref()
@@ -4393,6 +4406,15 @@ impl Checker {
                 None,
             ),
             unavailable: unavailable.clone(),
+            default_solves: params
+                .iter()
+                .zip(default_solves)
+                .filter(|(p, _)| {
+                    p.kind == mojito_ast::ast::ParamKind::Regular
+                        && !matches!(p.convention, Some(mojito_ast::ast::ArgConvention::Out))
+                })
+                .map(|(_, solved)| solved)
+                .collect(),
         };
         let fn_ty = Ty::new(if decls.is_empty() {
             TyKind::Func(Box::new(func))
@@ -4467,55 +4489,97 @@ impl Checker {
     /// A default value must fit its parameter's type. A default may name a
     /// compile-time value parameter (`value: Int = n`), so the value
     /// parameters are bound around the defaults as they are in the body.
+    /// `decls` is the declaration's whole declared list. Per parameter, the
+    /// result holds the parameter type its default solves the binders it
+    /// names to ([`Self::solved_default_parameter`]), which a call leaving
+    /// the argument out solves them from.
     pub(super) fn check_parameter_defaults(
         &mut self,
         params: &[FnParam],
         param_tys: &[Ty],
         decls: &[ParamDecl],
-    ) -> Result<(), TypeError> {
-        let bind_values = decls
+    ) -> Result<Vec<Option<Ty>>, TypeError> {
+        let arguments = ParamDecl::argument_decls(decls);
+        let bind_values = arguments
             .iter()
             .any(|decl| matches!(decl, ParamDecl::Value { .. }));
         if !bind_values {
-            return self.check_parameter_default_values(params, param_tys);
+            return self.check_parameter_default_values(params, param_tys, decls);
         }
         self.push_scope();
         let result = self
-            .declare_value_parameters(decls)
-            .and_then(|()| self.check_parameter_default_values(params, param_tys));
+            .declare_value_parameters(&arguments)
+            .and_then(|()| self.check_parameter_default_values(params, param_tys, decls));
         self.pop_scope();
         result
+    }
+
+    /// A default `default` of the parameter `name`, found to be of type
+    /// `found`, against the parameter's declared type `expected`: it fits,
+    /// as it is or through an `@implicit` conversion, or it solves the
+    /// binders of `decls` the type names, as a call passing it as the
+    /// argument would solve them, and fits the type so solved, which is
+    /// returned. Upstream binds `O` in `s: StringSpan[O] =
+    /// StaticString("d")` from the default when the call leaves `s` out.
+    pub(super) fn check_default_fits(
+        &self,
+        (name, default): (&str, &Expr),
+        (found, expected): (&Ty, &Ty),
+        decls: &[ParamDecl],
+        context: &dyn Fn() -> String,
+    ) -> Result<Option<Ty>, TypeError> {
+        // Fall back to an `@implicit` converting constructor, like the
+        // binding and argument positions do (records the ctor target so
+        // the omitted-arg default materializes it). A `None` default for
+        // `Optional[T]` resolves here.
+        if self.coerces_by_origins(found, expected)
+            || self.record_constructor_conversion(default, found, expected)?
+        {
+            return Ok(None);
+        }
+        let mismatch = |found: &Ty| TypeError::TypeMismatch {
+            expected: expected.to_string(),
+            found: found.to_string(),
+            context: context(),
+        };
+        let Some(solved) = self.solved_default_parameter((name, default), decls, expected, found)
+        else {
+            return Err(mismatch(found));
+        };
+        let found = self.infer_in_context(default, &solved, true)?;
+        self.record_default_literal_materialization(default, &found, &solved)?;
+        if self.coerces_by_origins(&found, &solved)
+            || self.record_constructor_conversion(default, &found, &solved)?
+        {
+            Ok(Some(solved))
+        } else {
+            Err(mismatch(&found))
+        }
     }
 
     fn check_parameter_default_values(
         &self,
         params: &[FnParam],
         param_tys: &[Ty],
-    ) -> Result<(), TypeError> {
-        for (p, pty) in params.iter().zip(param_tys) {
-            let Some(d) = &p.default else {
-                continue;
-            };
-            if let Some(name) = self.dynamic_default_reference(d) {
-                return Err(TypeError::DynamicDefault(name));
-            }
-            let dty = self.infer_in_context(d, pty, true)?;
-            self.record_default_literal_materialization(d, &dty, pty)?;
-            // Fall back to an `@implicit` converting constructor, like the
-            // binding and argument positions do (records the ctor target so
-            // the omitted-arg default materializes it). A `None` default for
-            // `Optional[T]` resolves here.
-            if !self.coerces_by_origins(&dty, pty)
-                && !self.record_constructor_conversion(d, &dty, pty)?
-            {
-                return Err(TypeError::TypeMismatch {
-                    expected: pty.to_string(),
-                    found: dty.to_string(),
-                    context: format!("default value of '{}'", p.name),
-                });
-            }
-        }
-        Ok(())
+        decls: &[ParamDecl],
+    ) -> Result<Vec<Option<Ty>>, TypeError> {
+        params
+            .iter()
+            .zip(param_tys)
+            .map(|(p, pty)| {
+                let Some(d) = &p.default else {
+                    return Ok(None);
+                };
+                if let Some(name) = self.dynamic_default_reference(d) {
+                    return Err(TypeError::DynamicDefault(name));
+                }
+                let dty = self.infer_in_context(d, pty, true)?;
+                self.record_default_literal_materialization(d, &dty, pty)?;
+                self.check_default_fits((&p.name, d), (&dty, pty), decls, &|| {
+                    format!("default value of '{}'", p.name)
+                })
+            })
+            .collect()
     }
 
     /// Register the storage struct of the closure declared at `site`, from

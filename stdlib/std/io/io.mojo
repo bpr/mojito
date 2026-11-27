@@ -40,8 +40,9 @@ def print[
     # `std._plugin` omits the hook (R1884); the CPU branch is the comptime
     # interpreter's too.
     var buffer = _FlushingWriteBuffer(file)
-    # Upstream's `values._write_to(buffer, sep=sep, end=end)`, whose bundled
-    # delimiters are `StaticString`s, not `print`'s `StringSlice`s (R1926).
+    # Upstream's `values._write_to(buffer, sep=sep, end=end)`: a bare
+    # `StringSlice` parameter declares no origin binder yet, so `sep` and
+    # `end` cannot solve `_write_to`'s `O3` and `O2` (R2376).
     comptime for i in range(values.__len__()):
         comptime if i > 0:
             buffer.write(sep)

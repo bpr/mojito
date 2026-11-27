@@ -639,12 +639,19 @@ impl UnitKey for AnnotationSite {
     fn units<'o>(&self, owners: &'o Owners) -> &'o [usize] {
         let units = match self {
             Self::FunctionParam { syntax, .. }
+            | Self::FunctionParamDefault { syntax, .. }
             | Self::FunctionReturn { syntax, .. }
             | Self::FunctionType { syntax, .. } => return owners.of_syntax(*syntax),
             // A field's type is its struct's declaration's, which a
             // package's declaration record holds.
             Self::StructField { .. } => None,
             Self::MethodParam {
+                module,
+                declaration,
+                method,
+                ..
+            }
+            | Self::MethodParamDefault {
                 module,
                 declaration,
                 method,
@@ -733,10 +740,12 @@ impl SiteKey for AnnotationSite {
     fn syntax(&self) -> Option<SyntaxId> {
         match self {
             Self::FunctionParam { syntax, .. }
+            | Self::FunctionParamDefault { syntax, .. }
             | Self::FunctionReturn { syntax, .. }
             | Self::FunctionType { syntax, .. } => Some(*syntax),
             Self::StructField { .. }
             | Self::MethodParam { .. }
+            | Self::MethodParamDefault { .. }
             | Self::MethodReturn { .. }
             | Self::MethodReceiver { .. } => None,
         }

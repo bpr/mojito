@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1370
+# swept-count	1371
 assets/type_error/address_space_unknown_leading_dot.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/address_space_unknown_name.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/atomic_bool_has_no_load.mojo	compile-reject	agree	error: no matching method in call to 'load'
@@ -55,6 +55,7 @@ assets/type_error/construction_field_pointer_not_owner_origin.mojo	compile-rejec
 assets/type_error/construction_struct_tail_field_not_owner_origin.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/custom_self_type_mismatch.mojo	compile-reject	agree	error: invalid call to 'only_int': value passed to 'self' cannot be converted from 'Box[String]' to 'Box[Int]'
 assets/type_error/custom_self_type_not_the_struct.mojo	compile-reject	agree	error: 'self' argument must have type 'Box[T]', but actually has type 'Int'
+assets/type_error/default_cannot_solve_mutable_origin.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 's' cannot be converted from 'StringLiteral["xy"]' to 'StringSpan[origin_of(origin_of(o))]', it depends on an unresolved parameter 'origin_of(o)'
 assets/type_error/function_bracket_explicit_mut_rejects_immutable.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'p' cannot be converted from 'Pointer[Int, ImmUntrackedOrigin]' to 'Pointer[Int, o]'
 assets/type_error/function_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'p' cannot be converted from 'Pointer[Int, ImmUntrackedOrigin]' to 'Pointer[Int, o]'
 assets/type_error/function_bracket_unbound_origin_uninferred.mojo	compile-reject	agree	error: invalid call to 'f': failed to infer parameter 'origin_of(_mlir_origin)'

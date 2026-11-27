@@ -797,6 +797,7 @@ impl Checker {
                     &availability,
                     symbol.to_string(),
                 )
+                .map(drop)
             });
         self.exit_struct_scope(saved);
         checked

@@ -3143,6 +3143,11 @@ struct MethodSig {
     /// runs the requirement's, which the requirement's declaration carries
     /// to the call (`TraitRequirement::defaults`).
     defaults: Vec<Option<SignatureDefault>>,
+    /// Per regular parameter, the type its default solves the method's own
+    /// binders that parameter's type names to, when it solves any
+    /// ([`Checker::solved_default_parameter`]): a call leaving the argument
+    /// out solves them from it. The method's check records it.
+    default_solves: Vec<Option<Ty>>,
     variadic: Option<Ty>,
     variadic_index: Option<usize>,
     /// The positional collector's convention (`var *args`), which a pack
@@ -3251,6 +3256,7 @@ impl MethodSig {
             names: (0..len).map(|i| format!("arg{i}")).collect(),
             required: vec![true; len],
             defaults: vec![None; len],
+            default_solves: vec![None; len],
             variadic: None,
             variadic_index: None,
             variadic_convention: None,
@@ -4353,6 +4359,11 @@ struct CallableOriginSignature {
     view_return: Vec<ViewReturnOrigin>,
     /// The rejection of a use of an `@unavailable` declaration.
     unavailable: Option<String>,
+    /// Per regular parameter, the type its default solves the binders that
+    /// parameter's type names to, when it solves any
+    /// ([`Checker::solved_default_parameter`]): a call leaving the argument
+    /// out solves them from it, as from an argument of that type.
+    default_solves: Vec<Option<Ty>>,
 }
 
 /// A struct header's conditional-conformance condition (`Copyable where

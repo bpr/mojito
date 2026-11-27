@@ -3020,6 +3020,10 @@ pub struct CheckedSignature {
     /// Each declared parameter's checked type, in declaration order (the
     /// receiver excluded), aligned with the declaration's parameters.
     pub params: Vec<Option<Ty>>,
+    /// Aligned with `params`: the type each default solves the binders its
+    /// parameter's type names to, where it solves any
+    /// ([`AnnotationSite::FunctionParamDefault`]).
+    pub defaults: Vec<Option<Ty>>,
     pub result: Option<Ty>,
     pub effect: Option<DeclarationEffect>,
     /// A method's custom receiver type (argument 0's declared type under
@@ -3039,6 +3043,16 @@ impl CheckedSignature {
     /// The checked type of the declared parameter at `index`.
     pub fn param(&self, index: usize) -> Option<&Ty> {
         self.params.get(index)?.as_ref()
+    }
+
+    /// The type the default of the declared parameter at `index` is
+    /// evaluated at: the type it solves the parameter's binders to, else
+    /// the parameter's own.
+    pub fn default_param(&self, index: usize) -> Option<&Ty> {
+        self.defaults
+            .get(index)
+            .and_then(Option::as_ref)
+            .or_else(|| self.param(index))
     }
 }
 
@@ -4915,6 +4929,27 @@ pub enum AnnotationSite {
         method: usize,
         param: usize,
     },
+    /// The type a free function parameter's default solves the binders of
+    /// the parameter's type to (`StringSpan[StaticConstantOrigin]` for `s:
+    /// StringSpan[O] = StaticString("d")`), which a call leaving the
+    /// argument out binds them from. Absent for a default that fits the
+    /// parameter's type as declared.
+    FunctionParamDefault {
+        #[serde(with = "mojito_ast::ast::statement_module")]
+        module: Option<String>,
+        declaration: Span,
+        syntax: mojito_common::token::SyntaxId,
+        param: usize,
+    },
+    /// [`Self::FunctionParamDefault`] for a method or trait requirement
+    /// parameter.
+    MethodParamDefault {
+        #[serde(with = "mojito_ast::ast::statement_module")]
+        module: Option<String>,
+        declaration: String,
+        method: usize,
+        param: usize,
+    },
     /// The checked return type of a free function declaration.
     FunctionReturn {
         #[serde(with = "mojito_ast::ast::statement_module")]
@@ -5510,6 +5545,18 @@ impl Signatures<'_> {
                         .cloned()
                 })
                 .collect(),
+            defaults: (0..arity)
+                .map(|param| {
+                    self.checked_types
+                        .get(&AnnotationSite::FunctionParamDefault {
+                            module: module.cloned(),
+                            declaration,
+                            syntax,
+                            param,
+                        })
+                        .cloned()
+                })
+                .collect(),
             result: self.checked_types.get(&result).cloned(),
             effect: self.declaration_effects.get(&result).cloned(),
             receiver: None,
@@ -5544,6 +5591,18 @@ impl Signatures<'_> {
                 .map(|param| {
                     self.checked_types
                         .get(&AnnotationSite::MethodParam {
+                            module: module.cloned(),
+                            declaration: declaration.to_string(),
+                            method,
+                            param,
+                        })
+                        .cloned()
+                })
+                .collect(),
+            defaults: (0..arity)
+                .map(|param| {
+                    self.checked_types
+                        .get(&AnnotationSite::MethodParamDefault {
                             module: module.cloned(),
                             declaration: declaration.to_string(),
                             method,

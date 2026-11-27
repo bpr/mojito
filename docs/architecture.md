@@ -9838,6 +9838,17 @@ binder's default) and the `_Self` of the trait declaring the member or
 requirement to the receiver (`requirement_self_bindings`). Every checked
 signature holds a default as an attribute (`SignatureDefault`), a literal
 constant or an evaluated default, as the lowered declaration does.
+A default may solve the binders its parameter's type names, as upstream's
+call binds them from the default's typed attribute when it leaves the
+argument out (`s: StringSpan[O] = StaticString("d")`): the check solves
+them in the one solve a call passing the default would bind them in
+(`Checker::solved_default_parameter`), and the signature carries the
+solved type (`CallableOriginSignature::default_solves`,
+`MethodSig::default_solves`), which a call omitting the argument adds to
+its own solve as an argument of that type. The checked declaration records
+it at `AnnotationSite::{FunctionParamDefault, MethodParamDefault}`
+(`CheckedSignature::default_param`), the type `lower_default` evaluates
+the default at.
 
 Keeping value-level behavior in `runtime` prevents the VM from baking every
 operation directly into the backend. The VM should be a consumer of checked MIR

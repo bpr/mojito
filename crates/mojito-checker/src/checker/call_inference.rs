@@ -1599,7 +1599,10 @@ impl Checker {
             let bound = self.bind_bracket_origins(ty.clone(), explicit.origins());
             return self.infer_generic_call(
                 span,
-                name,
+                (
+                    name,
+                    signature.map_or(&[][..], |signature| &signature.default_solves),
+                ),
                 &bound,
                 (param_args, explicit),
                 args,
@@ -1883,11 +1886,13 @@ impl Checker {
     /// parameter type and return the substituted result type.
     /// [`Self::infer_callable_ty`] of the generic function `generic`, with
     /// what its bracket `param_args` bound, `explicit`, already substituted
-    /// into its signature.
+    /// into its signature. An argument the call leaves out solves the
+    /// binders its parameter's type names from its default's solved type
+    /// in `default_solves`, as an argument of that type would.
     fn infer_generic_call(
         &self,
         span: &SourceSpan,
-        name: &str,
+        (name, default_solves): (&str, &[Option<Ty>]),
         generic: &Ty,
         (param_args, explicit): (&[mojito_ast::ast::ParamArg], ExplicitTypes),
         args: &[Expr],
@@ -2022,7 +2027,8 @@ impl Checker {
             }
         }
         // One solve binds the declared list: its origin binders from the
-        // places the arguments lend, beside its type and value binders.
+        // places the arguments lend, and from the solved default of each
+        // argument the call leaves out, beside its type and value binders.
         let SolvedCall {
             bound:
                 BoundParameters {
@@ -2032,15 +2038,15 @@ impl Checker {
                     ..
                 },
             origins,
-        } = self.resolve_call_params(
-            name,
-            binders,
+        } = self.resolve_generic_call_params(
+            (name, binders),
             (param_args, &explicit),
             (
                 &use_names,
-                &[&solve_params[..], &use_params[solve_params.len()..]].concat(),
+                (&solve_params, &use_params),
+                (&solve_actuals, &arg_tys),
             ),
-            &[&solve_actuals[..], &arg_tys[solve_actuals.len()..]].concat(),
+            (&slots, names, &func.params, default_solves),
         )?;
         let (use_params, params, variadic, ret, ref_return) =
             self.bound_generic_callee(func, origins.as_ref(), &use_params);
@@ -2478,6 +2484,123 @@ impl Checker {
             .map_err(|failure| self.collector_element_failure(name, decls, failure))?;
         bind_unbound_origin_attributes(&mut bound.attributes, (decls, bracket.0), origins.as_ref());
         Ok(SolvedCall { bound, origins })
+    }
+
+    /// The type the default `default` of the parameter `name`, of type
+    /// `expected`, solves the binders of `decls` that type names to, as a
+    /// signature reads it before its declaration's check, which records
+    /// the default's facts ([`Self::solved_default_parameter`]); `None`
+    /// when the type names none, the default fits it as it is, or it does
+    /// not type yet. The check reports a default that fits neither way.
+    pub(super) fn signature_default_solve(
+        &self,
+        (name, default): (&str, &Expr),
+        expected: &Ty,
+        decls: &[ParamDecl],
+    ) -> Option<Ty> {
+        if !decls
+            .iter()
+            .any(|decl| names_declared_binder(expected, decl))
+        {
+            return None;
+        }
+        self.probe(|| {
+            let found = self.infer_in_context(default, expected, true).ok()?;
+            if self.coerces_by_origins(&found, expected)
+                || self
+                    .implicit_conversion_constructor(&found, expected)
+                    .ok()?
+                    .is_some()
+            {
+                return None;
+            }
+            self.solved_default_parameter((name, default), decls, expected, &found)
+        })
+    }
+
+    /// The parameter type `pattern`, of the parameter `name`, with the
+    /// binders of `decls` it names solved from its default's type `found`
+    /// in the one solve a call passing the default binds them in, as
+    /// upstream's call leaving the argument out binds them from its typed
+    /// default attribute; `None` when that solve fails or leaves one of
+    /// them open. A binder the type does not name is another argument's.
+    pub(super) fn solved_default_parameter(
+        &self,
+        (name, default): (&str, &Expr),
+        decls: &[ParamDecl],
+        pattern: &Ty,
+        found: &Ty,
+    ) -> Option<Ty> {
+        let binders: Vec<ParamDecl> = decls
+            .iter()
+            .filter(|decl| names_declared_binder(pattern, decl))
+            .cloned()
+            .collect();
+        if binders.is_empty() {
+            return None;
+        }
+        let (solve_pattern, actual) =
+            self.reference_solve_pair(None, (pattern, found), default, &binders);
+        let SolvedCall {
+            bound: BoundParameters {
+                subst, arguments, ..
+            },
+            origins,
+        } = self
+            .resolve_call_params(
+                name,
+                &binders,
+                (&[], &ExplicitTypes::default()),
+                (&[name.to_string()], &[solve_pattern]),
+                &[actual],
+            )
+            .ok()?;
+        let pattern = origins
+            .as_ref()
+            .map_or_else(|| pattern.clone(), |origins| origins.substitute(pattern));
+        let declared =
+            self.declared_call_arguments(&binders, &arguments, &HashMap::new(), origins.as_ref());
+        let view = ParamDecl::argument_view(&binders);
+        let CallValues { values, .. } = self.call_values((&binders, &declared), &view, &arguments);
+        let expanded = super::generics::expand_solved_packs(&pattern, &view, &arguments);
+        let solved = self
+            .resolve_dependent_ty(
+                &self.resolve_assoc_ty(&substitute(&expanded, &subst)),
+                &values,
+            )
+            .ok()?;
+        (!binders
+            .iter()
+            .any(|decl| names_declared_binder(&solved, decl)))
+        .then_some(solved)
+    }
+
+    /// [`Self::resolve_call_params`] for a generic call of `name` over its
+    /// declared list `decls`: the supplied arguments' names `use_names`,
+    /// with the solve pairs `solve_params` and `solve_actuals` leading the
+    /// parameters `use_params` and argument types `arg_tys`, then, for each
+    /// parameter whose slot the call leaves out (`ArgSlot::Default`) and
+    /// whose default solves the binders its type names (`default_solves`),
+    /// its name, its declared type, and that solved type.
+    fn resolve_generic_call_params(
+        &self,
+        (name, decls): (&str, &[ParamDecl]),
+        bracket: (&[mojito_ast::ast::ParamArg], &ExplicitTypes),
+        supplied: SuppliedSolve<'_>,
+        (slots, names, params, default_solves): OmittedSolve<'_>,
+    ) -> Result<SolvedCall, TypeError> {
+        let (use_names, (solve_params, use_params), (solve_actuals, arg_tys)) = supplied;
+        let mut solve_names = use_names.to_vec();
+        let mut patterns = [solve_params, &use_params[solve_params.len()..]].concat();
+        let mut actuals = [solve_actuals, &arg_tys[solve_actuals.len()..]].concat();
+        for (index, slot) in slots.iter().enumerate() {
+            if let (ArgSlot::Default, Some(Some(solved))) = (slot, default_solves.get(index)) {
+                solve_names.push(names[index].clone());
+                patterns.push(params[index].clone());
+                actuals.push(solved.clone());
+            }
+        }
+        self.resolve_call_params(name, decls, bracket, (&solve_names, &patterns), &actuals)
     }
 
     /// Reject an argument binding an origin binder to an immutable origin
@@ -3399,3 +3522,22 @@ fn reject_uninferred_origins(
         },
     )
 }
+
+/// Whether `ty` names the binder `decl` declares.
+fn names_declared_binder(ty: &Ty, decl: &ParamDecl) -> bool {
+    match decl {
+        ParamDecl::Origin { origin, .. } => {
+            super::origins::names_origin_binder_in(ty, &|id| id == *origin)
+        }
+        decl => mojito_types::types::names_binder(ty, &decl.binder()),
+    }
+}
+
+/// A generic call's supplied arguments as its one solve reads them:
+/// their names, the solve patterns leading the parameters, and the solve
+/// actuals leading the argument types.
+type SuppliedSolve<'a> = (&'a [String], (&'a [Ty], &'a [Ty]), (&'a [Ty], &'a [Ty]));
+
+/// A generic call's slots, with its callee's parameter names, types, and
+/// solved defaults, which an argument the call leaves out solves from.
+type OmittedSolve<'a> = (&'a [ArgSlot], &'a [String], &'a [Ty], &'a [Option<Ty>]);

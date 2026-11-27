@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2661**.
+Next free ID: **R2662**.
 
 ## Ordered Work
 
@@ -5329,31 +5329,23 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1926 A default value cannot bind an origin parameter of its
-  parameter's type**
+- [ ] **R2661 A construction's solve of its struct's parameters reads no
+  initializer default**
 
-  `def f[O: ImmOrigin](s: StringSpan[O] = StaticString("d"))` is rejected
-  at its declaration with "type mismatch for default value of 's':
-  expected StringSpan, found StringSpan", where the pin binds `O` to the
-  default's static origin when the call leaves `s` out.
-  - The default is checked against the declared type with `O` still a
-    parameter, which no concrete origin coerces to.
-  - Probe: the same on a method, and `f()` and `f(StaticString("x"))`
-    printing `d` and `x`.
-  - Probe: the bundled `VariadicPack._write_to` takes `start`, `end`, and
-    `sep` as `StaticString` where upstream takes `StringSlice[O1]` (and
-    `O2`, `O3`) defaulted to `StaticString("")`.
-  - Probe: `def f[o: ImmOrigin](s: StringSlice[o] = "x")` fails the same
-    way ("expected StringSpan[false], found StringLiteral[\"x\"]"), and so
-    does `def f[m: Bool, //, o: Origin[mut=m]](v: V[o] = 7)` over a `V`
-    whose `@implicit` initializer returns `V[ImmStaticOrigin]` ("expected
-    V[m], found IntLiteral[7]"). The pin prints `1 3 4` for `f(), f("abc"),
-    f(a)` and `7 3 5` for `f(), f(V[MutAnyOrigin](other=3)), f(5)`.
-  - Probe: once R2376 declares the binder pair for a bare `StringSlice`
-    parameter, the bundled library stops packaging at `print`'s `sep:
-    StringSlice = " "` (`std/io/io.mojo`) with "expected
-    StringSpan[$mut_sep], found StringLiteral[\" \"]".
-  - Found while landing R1302 (2026-11-05).
+  `S()` over `struct S[o: ImmOrigin]` with `def __init__(out self, s:
+  StringSpan[Self.o] = StaticString("init"))` is rejected at the
+  declaration ("type mismatch for default value of method parameter 's'"),
+  where the pin binds `o` to the default's static origin and prints
+  `init`, then `q` for `S(StaticString("q"))`.
+  - The default check solves only the method's own binders
+    (`check_method_defaults`, `checker/declarations.rs`). An initializer's
+    default also solves the struct's binders a construction infers.
+  - Neither construction solve in `infer_construction_ranked` (the
+    single-signature fast path and the general one) adds an omitted
+    argument's solved default type to `constructed_unification`, as
+    `infer_generic_call` and `instantiate_method_generics` do
+    (`MethodSig::default_solves`).
+  - Found while landing R1926 (2026-11-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -11914,14 +11906,20 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     origin into argument exclusivity. Confirm R1156's `Span` probes and
     delete it with this entry. Its pointer-alias probe is R2441's.
   - With the gate removed, the bundled library now packages past every
-    literal passed to a bare `StringSpan` parameter and past the `Hasher`
-    requirement (`AHasher._update_with_bytes`), and stops at `print`'s
-    `sep: StringSlice = " "` default (R1926). A conversion's `mut=` now
-    solves (R2656), so the user `V` probe of `h(xs)` over `def h(v: V[Int,
-    _])` should print `True` once the gate is gone. The site list past
-    R1926 is unverified (the `Writer.write_string` requirement among it):
-    if a packaging failure appears that is none of these, file it and keep
-    the gate.
+    literal passed to a bare `StringSpan` parameter, past the `Hasher`
+    requirement (`AHasher._update_with_bytes`), and past `print`'s `sep:
+    StringSlice = " "` default. A conversion's `mut=` now solves (R2656),
+    so the user `V` probe of `h(xs)` over `def h(v: V[Int, _])` should
+    print `True` once the gate is gone. The site list past
+    `_horner_evaluate` is unverified (the `Writer.write_string`
+    requirement among it): if a packaging failure appears that is none of
+    these, file it and keep the gate.
+  - Probe: with the gate removed, packaging stops at the compile-time
+    parameter `coefficients: Span[Scalar[dtype], _]` of
+    `_horner_evaluate` (`std/math/polynomial.mojo`), with "failed to infer
+    parameter 'mut'" at its call `_horner_evaluate[coefficients](x)`.
+  - Probe: once it lands, the bundled `print` takes back upstream's
+    `values._write_to(buffer, sep=sep, end=end)` (`std/io/io.mojo`).
   - Probe: `g(c, v)` over `def g[X: R](x: X, v: V[Int, _]) -> Int: return
     x.r(v)`, with `R` requiring `def r[m: Bool, //, o: Origin[mut=m]](self,
     v: V[Int, o]) -> Int`, fails ("no overload matches"), where the pin
@@ -13237,9 +13235,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Spell the selection as `std.math` does (`comptime hook = …; comptime
     if hook:`) until `comptime if case` lands.
   - Probe: upstream's `values._write_to(buffer, sep=sep, end=end)` is
-    respelled as a `comptime for` over the pack, since the bundled
-    `_write_to` takes `StaticString` delimiters where `print`'s are
-    `StringSlice`s (R1926).
+    respelled as a `comptime for` over the pack, since a bare
+    `StringSlice` `sep` declares no origin binder to solve `_write_to`'s
+    `O3` from (R2376).
   - Found while landing R1287 (2026-11-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.

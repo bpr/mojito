@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A default now solves the compile-time binders its parameter's type names
+  when a call leaves the argument out, as upstream's call binds them from
+  the default (R1926). `def f[O: ImmOrigin](s: StringSpan[O] =
+  StaticString("d"))`, `s: StringSlice[o] = "x"`, and `v: V[o] = 7` over an
+  `@implicit` `V[ImmStaticOrigin]` initializer, which were rejected at the
+  declaration as a type mismatch, now run for free, method, and
+  trait-bound calls (`assets/ok/default_solves_origin_binder.mojo`), and
+  the bundled `VariadicPack._write_to` takes upstream's `StringSpan[O1]`
+  delimiters.
+
 - A conformer's method now satisfies a trait requirement that declares its
   own origin binders, and their `mut=` binders, over a struct instance or a
   `ref` result, also when the conformer's struct has origin parameters, as
